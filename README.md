@@ -1,6 +1,9 @@
 # Resource Dashboard
 
-A native Linux desktop application and standalone HTTP server for live system resource monitoring. Built for the AIIMS Rishikesh project to monitor CPU, memory, GPU, disk I/O, and network activity during heavy workloads (like image generation and model training).
+A native Linux desktop application and standalone HTTP server for live system resource monitoring. Built to monitor CPU, memory, GPU, disk I/O, and network activity during heavy workloads (like image generation and model training).
+
+> [!NOTE]
+> Currently, this application is only supported on Linux. Support for Windows and macOS is coming soon!
 
 ## Features
 - **GPU Telemetry:** Tracks GPU core/memory utilization, temperatures, power draw, and fan speed (via `nvidia-smi`).
