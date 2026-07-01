@@ -15,7 +15,18 @@ A native Linux desktop application and standalone HTTP server for live system re
 
 ## Installation (Linux)
 
-You can install the dashboard as a native desktop application using the provided install script.
+### Method 1: Using the `.deb` Package (Recommended for Debian/Ubuntu)
+
+1. **[Download the latest `.deb` package](https://github.com/Abhishek-Durgude/Resource-Monitor/raw/main/resource-dashboard_1.0-1_all.deb)** from this repository.
+2. Install it using `apt` (this automatically handles required dependencies):
+   ```bash
+   sudo apt install ./resource-dashboard_1.0-1_all.deb
+   ```
+3. You can now launch it from your application menu or terminal!
+
+### Method 2: Manual Installation Script
+
+If you aren't on a Debian-based system or prefer a manual script:
 
 1. Clone or download this repository.
 2. Run the installer script:
