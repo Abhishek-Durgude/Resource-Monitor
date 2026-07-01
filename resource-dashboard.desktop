@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Resource Dashboard
+GenericName=System Monitor
+Comment=Live resource monitoring dashboard for CPU, GPU, Memory, Disk, and Network — AIIMS Rishikesh
+Exec=python3 SCRIPT_PATH/resource_dashboard_app.py
+Icon=ICON_PATH/resource_dashboard_icon.svg
+Terminal=false
+Categories=System;Monitor;Utility;
+Keywords=monitor;cpu;gpu;memory;dashboard;resources;nvidia;system;
+StartupNotify=true
+StartupWMClass=resource-dashboard
