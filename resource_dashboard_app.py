@@ -17,6 +17,7 @@ Dependencies (Ubuntu/Debian):
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import sys
@@ -87,6 +88,118 @@ def find_free_port(start: int = 18700, end: int = 18800) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Utility: wait for the HTTP server to be ready
+# ─────────────────────────────────────────────────────────────────────────────
+def wait_for_server(host: str, port: int, timeout: float = 10.0) -> None:
+    """Block until the server accepts TCP connections, or *timeout* seconds elapse.
+
+    Retries every 0.2 s.  If the timeout is reached a warning is printed but
+    execution continues so the GTK window can still attempt to load.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1.0)
+                s.connect((host if host != "0.0.0.0" else "127.0.0.1", port))
+                return  # server is ready
+        except OSError:
+            time.sleep(0.2)
+    print(
+        f"Warning: server on {host}:{port} did not respond within {timeout}s; "
+        "attempting to load anyway.",
+        file=sys.stderr,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Window State Persistence
+# ─────────────────────────────────────────────────────────────────────────────
+class WindowStatePersistence:
+    """Save and restore window size and position via a JSON config file.
+
+    Saves are debounced (default 500 ms) so rapid configure events don't
+    cause excessive disk I/O.
+    """
+
+    CONFIG_DIR = Path.home() / ".config" / "resource-dashboard"
+    CONFIG_FILE = CONFIG_DIR / "window_state.json"
+
+    def __init__(self, window: Gtk.Window, debounce_ms: int = 500):
+        self._window = window
+        self._debounce_ms = debounce_ms
+        self._save_timer_id: int | None = None
+        self._restore()
+        window.connect("configure-event", self._on_configure)
+
+    # ── Restore ───────────────────────────────────────────────────────────
+    def _restore(self) -> None:
+        """Load previously-saved geometry and apply it (with screen-bounds check)."""
+        if not self.CONFIG_FILE.is_file():
+            return
+        try:
+            state = json.loads(self.CONFIG_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            return
+
+        width = state.get("width", 1400)
+        height = state.get("height", 900)
+        x = state.get("x")
+        y = state.get("y")
+
+        # Screen-bounds sanity check
+        screen = self._window.get_screen()
+        if screen:
+            sw = screen.get_width()
+            sh = screen.get_height()
+            width = min(width, sw)
+            height = min(height, sh)
+            if x is not None and y is not None:
+                x = max(0, min(x, sw - 100))
+                y = max(0, min(y, sh - 100))
+
+        self._window.set_default_size(width, height)
+        if x is not None and y is not None:
+            self._window.move(x, y)
+
+    # ── Save (debounced) ──────────────────────────────────────────────────
+    def _on_configure(self, widget, event) -> bool:
+        """Schedule a debounced save whenever the window is moved or resized."""
+        if self._save_timer_id is not None:
+            GLib.source_remove(self._save_timer_id)
+        self._save_timer_id = GLib.timeout_add(self._debounce_ms, self._do_save)
+        return False  # propagate event
+
+    def _do_save(self) -> bool:
+        """Actually persist the current geometry to disk."""
+        self._save_timer_id = None
+        win = self._window.get_window()
+        if win is None:
+            return False  # GLib.SOURCE_REMOVE
+        size = self._window.get_size()
+        pos = self._window.get_position()
+        state = {
+            "width": size.width,
+            "height": size.height,
+            "x": pos.root_x,
+            "y": pos.root_y,
+        }
+        try:
+            self.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            self.CONFIG_FILE.write_text(json.dumps(state, indent=2))
+        except OSError as exc:
+            print(f"Warning: could not save window state: {exc}", file=sys.stderr)
+        return False  # GLib.SOURCE_REMOVE
+
+    def save_now(self) -> None:
+        """Immediately persist the current window geometry (call before hide/quit)."""
+        if self._save_timer_id is not None:
+            GLib.source_remove(self._save_timer_id)
+            self._save_timer_id = None
+        self._do_save()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Dashboard Server Thread
 # ─────────────────────────────────────────────────────────────────────────────
 class DashboardServerThread(threading.Thread):
@@ -129,6 +242,7 @@ class DashboardWindow(Gtk.Window):
         self.set_default_size(1400, 900)
         self.set_position(Gtk.WindowPosition.CENTER)
         self.connect("destroy", self._on_destroy)
+        self.connect("delete-event", self._on_delete_event)
 
         # Dark theme
         settings = Gtk.Settings.get_default()
@@ -231,8 +345,10 @@ class DashboardWindow(Gtk.Window):
         scrolled.add(self.webview)
         self.add(scrolled)
 
-        # Load dashboard
-        self.webview.load_uri(self.url)
+        # Show splash screen while the server finishes starting
+        self.webview.load_html(SPLASH_HTML, "about:blank")
+        self._server_check_attempts = 0
+        GLib.timeout_add(250, self._check_server_and_load)
 
     def _setup_shortcuts(self) -> None:
         accel_group = Gtk.AccelGroup()
@@ -317,8 +433,48 @@ class DashboardWindow(Gtk.Window):
             return True
         return False
 
+    def _on_delete_event(self, _widget, _event) -> bool:
+        """Intercept the window close button.
+
+        If a system-tray indicator is available, hide the window instead of
+        quitting so the app keeps running in the background.
+        """
+        if HAS_APPINDICATOR:
+            # Save window geometry before hiding
+            if hasattr(self, '_state_persistence') and self._state_persistence:
+                self._state_persistence.save_now()
+            self.hide()
+            return True  # prevent destruction
+        return False  # allow normal destroy → _on_destroy
+
     def _on_destroy(self, _widget) -> None:
+        # Save window geometry one last time
+        if hasattr(self, '_state_persistence') and self._state_persistence:
+            self._state_persistence.save_now()
         Gtk.main_quit()
+
+    def _check_server_and_load(self) -> bool:
+        """Periodically check if the dashboard server is reachable, then load the real URL."""
+        self._server_check_attempts += 1
+        try:
+            # Parse host/port from self.url
+            from urllib.parse import urlparse
+            parsed = urlparse(self.url)
+            host = parsed.hostname or "127.0.0.1"
+            port = parsed.port or 80
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                s.connect((host, port))
+            # Server is ready — load the real dashboard
+            self.webview.load_uri(self.url)
+            return False  # GLib.SOURCE_REMOVE
+        except OSError:
+            if self._server_check_attempts >= 40:  # ~10 s
+                print("Warning: server check timed out; loading URL anyway.",
+                      file=sys.stderr)
+                self.webview.load_uri(self.url)
+                return False  # GLib.SOURCE_REMOVE
+            return True  # GLib.SOURCE_CONTINUE — try again
 
     # Track fullscreen state
     def do_window_state_event(self, event):
@@ -432,6 +588,11 @@ Keyboard Shortcuts:
         default=1.0,
         help="Initial zoom level (default: 1.0)",
     )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host IP to bind the server to (use 0.0.0.0 for network access). Default: 127.0.0.1",
+    )
     return parser.parse_args()
 
 
@@ -447,14 +608,16 @@ def main() -> None:
 
     # Find a free port and start the server
     port = find_free_port()
-    host = "127.0.0.1"
+    host = args.host
     url = f"http://{host}:{port}/"
+    if host == "0.0.0.0":
+        url = f"http://127.0.0.1:{port}/"
 
     server_thread = DashboardServerThread(host, port, sample_root, args.top)
     server_thread.start()
 
-    # Brief wait for the server to be ready
-    time.sleep(0.3)
+    # Wait for the server to be ready (with retries)
+    wait_for_server(host, port, timeout=10)
 
     # ── Resolve icon path ──
     icon_path = None
@@ -475,6 +638,9 @@ def main() -> None:
     if args.zoom != 1.0:
         window.webview.set_zoom_level(args.zoom)
         window._update_zoom_label()
+
+    # ── Window state persistence ──
+    window._state_persistence = WindowStatePersistence(window)
 
     # ── System tray (if available) ──
     setup_tray_indicator(window, icon_path)

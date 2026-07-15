@@ -9,6 +9,9 @@ Python standard library, so it can run without extra packages.
 from __future__ import annotations
 
 import argparse
+import base64
+import logging
+import configparser
 import csv
 import glob
 import io
@@ -25,7 +28,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse, parse_qs
 import webbrowser
 
@@ -47,6 +50,19 @@ def human_bytes(value: float) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024.0
     return f"{value:.1f} B"
+
+
+def sanitize_for_json(obj: Any) -> Any:
+    """Replace NaN / inf / -inf floats with None so json.dumps never fails."""
+    if isinstance(obj, float):
+        if obj != obj or obj == float('inf') or obj == float('-inf'):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [sanitize_for_json(v) for v in obj]
+    return obj
 
 
 # ---------------------------------------------------------------------------
@@ -236,67 +252,86 @@ def read_network_totals() -> Dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# GPU
+# GPU  (with caching – avoids duplicate nvidia-smi calls per sample cycle)
 # ---------------------------------------------------------------------------
-def read_gpu_info() -> List[Dict[str, str]]:
-    command = [
+_gpu_cache: Dict[str, Any] = {"info": [], "procs": [], "timestamp": 0.0}
+_GPU_CACHE_TTL = 0.5  # seconds
+
+
+def _refresh_gpu_cache() -> None:
+    """Populate the module-level GPU cache if it is stale."""
+    now = time.time()
+    if now - _gpu_cache["timestamp"] < _GPU_CACHE_TTL:
+        return
+
+    # --- GPU info ---
+    info_cmd = [
         "nvidia-smi",
         "--query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu,power.draw,power.limit,fan.speed,clocks.current.sm,clocks.max.sm",
         "--format=csv,noheader,nounits",
     ]
-    try:
-        output = subprocess.check_output(command, stderr=subprocess.DEVNULL, text=True)
-    except Exception:
-        return []
-
     gpus: List[Dict[str, str]] = []
-    for raw_line in output.strip().splitlines():
-        parts = [part.strip() for part in raw_line.split(",")]
-        if len(parts) >= 6:
-            gpus.append(
-                {
-                    "index": parts[0],
-                    "name": parts[1],
-                    "utilization": parts[2],
-                    "memory_utilization": parts[3],
-                    "memory_used": parts[4],
-                    "memory_total": parts[5],
-                    "temperature": parts[6] if len(parts) > 6 else "N/A",
-                    "power_draw": parts[7] if len(parts) > 7 else "N/A",
-                    "power_limit": parts[8] if len(parts) > 8 else "N/A",
-                    "fan_speed": parts[9] if len(parts) > 9 else "N/A",
-                    "clock_sm": parts[10] if len(parts) > 10 else "N/A",
-                    "clock_sm_max": parts[11] if len(parts) > 11 else "N/A",
-                }
-            )
-    return gpus
+    try:
+        output = subprocess.check_output(info_cmd, stderr=subprocess.DEVNULL, text=True)
+        for raw_line in output.strip().splitlines():
+            parts = [part.strip() for part in raw_line.split(",")]
+            if len(parts) >= 6:
+                gpus.append(
+                    {
+                        "index": parts[0],
+                        "name": parts[1],
+                        "utilization": parts[2],
+                        "memory_utilization": parts[3],
+                        "memory_used": parts[4],
+                        "memory_total": parts[5],
+                        "temperature": parts[6] if len(parts) > 6 else "N/A",
+                        "power_draw": parts[7] if len(parts) > 7 else "N/A",
+                        "power_limit": parts[8] if len(parts) > 8 else "N/A",
+                        "fan_speed": parts[9] if len(parts) > 9 else "N/A",
+                        "clock_sm": parts[10] if len(parts) > 10 else "N/A",
+                        "clock_sm_max": parts[11] if len(parts) > 11 else "N/A",
+                    }
+                )
+    except Exception:
+        pass
 
-
-def read_gpu_processes() -> List[Dict[str, str]]:
-    """Return list of processes running on GPUs via nvidia-smi."""
-    command = [
+    # --- GPU processes ---
+    proc_cmd = [
         "nvidia-smi",
         "--query-compute-apps=pid,process_name,used_gpu_memory,gpu_bus_id",
         "--format=csv,noheader,nounits",
     ]
-    try:
-        output = subprocess.check_output(command, stderr=subprocess.DEVNULL, text=True)
-    except Exception:
-        return []
-
     processes: List[Dict[str, str]] = []
-    for raw_line in output.strip().splitlines():
-        parts = [p.strip() for p in raw_line.split(",")]
-        if len(parts) >= 3:
-            processes.append(
-                {
-                    "pid": parts[0],
-                    "name": parts[1],
-                    "gpu_mem_mb": parts[2],
-                    "bus_id": parts[3] if len(parts) > 3 else "",
-                }
-            )
-    return processes
+    try:
+        output = subprocess.check_output(proc_cmd, stderr=subprocess.DEVNULL, text=True)
+        for raw_line in output.strip().splitlines():
+            parts = [p.strip() for p in raw_line.split(",")]
+            if len(parts) >= 3:
+                processes.append(
+                    {
+                        "pid": parts[0],
+                        "name": parts[1],
+                        "gpu_mem_mb": parts[2],
+                        "bus_id": parts[3] if len(parts) > 3 else "",
+                    }
+                )
+    except Exception:
+        pass
+
+    _gpu_cache["info"] = gpus
+    _gpu_cache["procs"] = processes
+    _gpu_cache["timestamp"] = now
+
+
+def read_gpu_info() -> List[Dict[str, str]]:
+    _refresh_gpu_cache()
+    return _gpu_cache["info"]
+
+
+def read_gpu_processes() -> List[Dict[str, str]]:
+    """Return list of processes running on GPUs via nvidia-smi."""
+    _refresh_gpu_cache()
+    return _gpu_cache["procs"]
 
 
 # ---------------------------------------------------------------------------
@@ -585,658 +620,35 @@ def generate_csv() -> str:
 # ---------------------------------------------------------------------------
 # HTML Dashboard
 # ---------------------------------------------------------------------------
-HTML_TEMPLATE = """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Resource Dashboard – AIIMS Rishikesh</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg: #0b1020;
-      --panel: rgba(15, 23, 42, 0.88);
-      --panel-border: rgba(148, 163, 184, 0.18);
-      --text: #e5eefc;
-      --muted: #92a2bf;
-      --accent: #5eead4;
-      --accent-2: #60a5fa;
-      --warn: #fbbf24;
-      --danger: #fb7185;
-      --good: #4ade80;
-    }
+import sys
 
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at top left, rgba(96, 165, 250, 0.18), transparent 28%),
-        radial-gradient(circle at 80% 10%, rgba(94, 234, 212, 0.12), transparent 24%),
-        linear-gradient(180deg, #070b16 0%, #0b1020 56%, #111827 100%);
-      color: var(--text);
-      min-height: 100vh;
-    }
+def get_html_template():
+    template_path = Path(__file__).parent / 'dashboard.html'
+    if template_path.exists():
+        return template_path.read_text(encoding='utf-8')
+    return "<html><body>Error: dashboard.html not found</body></html>"
 
-    .wrap { max-width: 1520px; margin: 0 auto; padding: 24px; }
-
-    /* --- Hero --- */
-    .hero {
-      display: grid;
-      grid-template-columns: 1.3fr 0.9fr;
-      gap: 16px;
-      margin-bottom: 16px;
-    }
-    .title-card, .stats-card, .panel {
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
-      border-radius: 20px;
-      box-shadow: 0 18px 45px rgba(0,0,0,0.28);
-      backdrop-filter: blur(12px);
-    }
-    .title-card { padding: 24px; }
-    h1 { margin: 0 0 10px; font-size: clamp(1.8rem, 3.5vw, 3rem); letter-spacing: -0.03em; font-weight: 800; }
-    .subtitle { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.55; }
-    .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; color: var(--muted); font-size: 0.9rem; }
-    .pill { padding: 6px 12px; border-radius: 999px; background: rgba(96, 165, 250, 0.12); border: 1px solid rgba(96, 165, 250, 0.25); }
-    .stats-card { padding: 16px 20px; display: grid; gap: 8px; align-content: center; }
-    .stat-row { display: grid; grid-template-columns: 130px 1fr auto; gap: 10px; align-items: center; }
-    .label { color: var(--muted); font-size: 0.88rem; }
-    .value { font-weight: 700; font-size: 0.95rem; white-space: nowrap; }
-
-    /* --- Bars --- */
-    .bar {
-      height: 12px; border-radius: 999px; overflow: hidden;
-      background: rgba(148, 163, 184, 0.16);
-      border: 1px solid rgba(148, 163, 184, 0.12);
-    }
-    .fill { height: 100%; width: 0%; border-radius: inherit; transition: width 0.35s ease; }
-
-    /* --- Grid layout --- */
-    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; margin-bottom: 14px; }
-    .panel { padding: 16px; }
-    .span-3 { grid-column: span 3; }
-    .span-4 { grid-column: span 4; }
-    .span-6 { grid-column: span 6; }
-    .span-8 { grid-column: span 8; }
-    .span-12 { grid-column: span 12; }
-    .panel h2 { margin: 0 0 10px; font-size: 1rem; letter-spacing: 0.02em; font-weight: 700; }
-    .chart { width: 100%; height: 120px; }
-    .chart-line { fill: none; stroke-width: 2; }
-    .chart-area { fill-opacity: 0.18; }
-    .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; }
-    .tiny { color: var(--muted); font-size: 0.82rem; }
-
-    /* --- Tables --- */
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid rgba(148, 163, 184, 0.14); font-size: 0.88rem; }
-    th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }
-
-    .grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    .gpu-card { display: grid; gap: 8px; }
-    .gpu-item { padding: 10px; border-radius: 14px; background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.12); }
-
-    /* --- Alert flashing --- */
-    @keyframes alert-pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(251, 113, 133, 0); }
-      50% { box-shadow: 0 0 20px 4px rgba(251, 113, 133, 0.5); }
-    }
-    .alert-active { animation: alert-pulse 1.4s ease-in-out infinite; border-color: var(--danger) !important; }
-
-    /* --- Heatmap cells --- */
-    .heatmap-grid { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 8px; }
-    .heatmap-cell {
-      width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center;
-      font-size: 0.65rem; font-weight: 600; color: #fff; transition: background 0.3s ease;
-    }
-
-    /* --- Training timer --- */
-    .timer-box {
-      display: flex; align-items: center; gap: 10px; margin-top: 12px;
-    }
-    .timer-btn {
-      padding: 6px 16px; border-radius: 10px; border: 1px solid var(--panel-border);
-      background: rgba(94, 234, 212, 0.15); color: var(--accent); cursor: pointer;
-      font-size: 0.85rem; font-weight: 600; transition: background 0.2s;
-    }
-    .timer-btn:hover { background: rgba(94, 234, 212, 0.3); }
-    .timer-btn.stop { background: rgba(251, 113, 133, 0.15); color: var(--danger); }
-    .timer-btn.stop:hover { background: rgba(251, 113, 133, 0.3); }
-    .timer-display { font-size: 1.6rem; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 0.03em; }
-
-    /* --- Toolbar --- */
-    .toolbar {
-      display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px;
-      padding: 10px 16px; border-radius: 14px;
-      background: rgba(15, 23, 42, 0.6); border: 1px solid var(--panel-border);
-    }
-    .toolbar label { font-size: 0.85rem; color: var(--muted); }
-    .toolbar select, .toolbar input[type=range] {
-      background: rgba(148,163,184,0.12); border: 1px solid var(--panel-border);
-      color: var(--text); border-radius: 8px; padding: 4px 8px; font-size: 0.85rem;
-    }
-    .export-btn {
-      margin-left: auto;
-      padding: 6px 16px; border-radius: 10px; border: 1px solid rgba(96, 165, 250, 0.35);
-      background: rgba(96, 165, 250, 0.12); color: var(--accent-2); cursor: pointer;
-      font-size: 0.85rem; font-weight: 600; text-decoration: none; transition: background 0.2s;
-    }
-    .export-btn:hover { background: rgba(96, 165, 250, 0.3); }
-
-    .footer { margin-top: 14px; color: var(--muted); font-size: 0.84rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-
-    @media (max-width: 1100px) {
-      .hero, .grid-two { grid-template-columns: 1fr; }
-      .span-3, .span-4, .span-6, .span-8 { grid-column: span 12; }
-    }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-
-    <!-- Toolbar -->
-    <div class="toolbar">
-      <label>Refresh: <span id="refresh-val">2</span>s</label>
-      <input type="range" id="refresh-slider" min="1" max="10" value="2" step="1" />
-      <label style="margin-left: 12px;">🔔 Alerts</label>
-      <select id="alert-toggle">
-        <option value="on">On</option>
-        <option value="off">Off</option>
-      </select>
-      <label style="margin-left: 12px;">🔕 Notifications</label>
-      <select id="notif-toggle">
-        <option value="off">Off</option>
-        <option value="on">On</option>
-      </select>
-      <a class="export-btn" href="/api/export_csv" download="resource_metrics.csv">📥 Export CSV</a>
-    </div>
-
-    <!-- Hero -->
-    <div class="hero">
-      <div class="title-card">
-        <h1>🖥️ Resource Dashboard</h1>
-        <p class="subtitle">Live local monitor for CPU, memory, disk I/O, network, GPU, and training workloads. Designed for the AIIMS Rishikesh burn image generation pipeline.</p>
-        <div class="meta">
-          <span class="pill" id="host-pill">Host: loading...</span>
-          <span class="pill" id="platform-pill">Platform: loading...</span>
-          <span class="pill" id="uptime-pill">Uptime: loading...</span>
-          <span class="pill" id="zombie-pill" style="display:none;">🧟 Zombies: 0</span>
-        </div>
-        <!-- Training timer -->
-        <div class="timer-box">
-          <button class="timer-btn" id="timer-toggle" onclick="toggleTimer()">▶ Start Timer</button>
-          <button class="timer-btn stop" id="timer-reset" onclick="resetTimer()">↺ Reset</button>
-          <div class="timer-display" id="timer-display">00:00:00</div>
-        </div>
-      </div>
-      <div class="stats-card" id="stats-card">
-        <div class="stat-row"><div class="label">CPU</div><div class="bar"><div class="fill" id="cpu-fill" style="background: linear-gradient(90deg, var(--accent), var(--accent-2));"></div></div><div class="value" id="cpu-value">0%</div></div>
-        <div class="stat-row"><div class="label">IO-Wait</div><div class="bar"><div class="fill" id="iowait-fill" style="background: linear-gradient(90deg, #f97316, #ef4444);"></div></div><div class="value" id="iowait-value">0%</div></div>
-        <div class="stat-row"><div class="label">Memory</div><div class="bar"><div class="fill" id="mem-fill" style="background: linear-gradient(90deg, var(--warn), #f97316);"></div></div><div class="value" id="mem-value">0%</div></div>
-        <div class="stat-row"><div class="label">GPU Core</div><div class="bar"><div class="fill" id="gpu-core-fill" style="background: linear-gradient(90deg, #22d3ee, #3b82f6);"></div></div><div class="value" id="gpu-core-value">N/A</div></div>
-        <div class="stat-row"><div class="label">GPU Memory</div><div class="bar"><div class="fill" id="gpu-mem-fill" style="background: linear-gradient(90deg, #34d399, #10b981);"></div></div><div class="value" id="gpu-mem-value">N/A</div></div>
-        <div class="stat-row"><div class="label">Disk</div><div class="bar"><div class="fill" id="disk-fill" style="background: linear-gradient(90deg, #a78bfa, #60a5fa);"></div></div><div class="value" id="disk-value">0%</div></div>
-        <div class="stat-row"><div class="label">Network</div><div class="bar"><div class="fill" id="net-fill" style="background: linear-gradient(90deg, var(--good), var(--accent));"></div></div><div class="value" id="net-value">0 B/s</div></div>
-      </div>
-    </div>
-
-    <!-- Row 1: CPU Trend + IO-Wait, Memory Trend -->
-    <div class="grid">
-      <div class="panel span-6" id="panel-cpu">
-        <div class="section-head"><h2>CPU Trend</h2><span class="tiny">overall + io-wait</span></div>
-        <svg class="chart" id="cpu-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
-        <div class="section-head" style="margin-top:10px;"><h2>Per-Core Heatmap</h2><span class="tiny" id="core-count"></span></div>
-        <div class="heatmap-grid" id="cpu-heatmap"></div>
-      </div>
-      <div class="panel span-6" id="panel-mem">
-        <div class="section-head"><h2>Memory Trend</h2><span class="tiny">used %</span></div>
-        <svg class="chart" id="mem-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
-        <div id="mem-details" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 0.82rem; color: var(--muted);"></div>
-      </div>
-    </div>
-
-    <!-- Row 2: GPU Util Trend, GPU Mem / Temp / Power Trend -->
-    <div class="grid">
-      <div class="panel span-6">
-        <div class="section-head"><h2>GPU Utilization Trend</h2><span class="tiny">core % avg</span></div>
-        <svg class="chart" id="gpu-util-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
-      </div>
-      <div class="panel span-6">
-        <div class="section-head"><h2>GPU Memory / Temp / Power</h2><span class="tiny">history</span></div>
-        <svg class="chart" id="gpu-extra-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
-        <div style="display: flex; gap: 14px; margin-top: 6px; font-size: 0.78rem; color: var(--muted);">
-          <span>🟢 Mem%</span><span>🟠 Temp°C</span><span>🔵 Power W</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Row 3: Network, Disk I/O -->
-    <div class="grid">
-      <div class="panel span-6">
-        <div class="section-head"><h2>Network Trend</h2><span class="tiny">rx / tx rates</span></div>
-        <svg class="chart" id="net-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
-      </div>
-      <div class="panel span-6">
-        <div class="section-head"><h2>Disk I/O Trend</h2><span class="tiny">read / write throughput</span></div>
-        <svg class="chart" id="diskio-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
-        <div style="display: flex; gap: 14px; margin-top: 6px; font-size: 0.78rem; color: var(--muted);">
-          <span>🟢 Read</span><span>🔵 Write</span>
-          <span id="diskio-rates" style="margin-left:auto;"></span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Row 4: Disk/Load/Temp, Processes, GPU Cards -->
-    <div class="grid">
-      <div class="panel span-3">
-        <h2>System Info</h2>
-        <div class="gpu-card" id="sysinfo-box"></div>
-      </div>
-      <div class="panel span-5">
-        <div class="section-head"><h2>Top Processes</h2><span class="tiny">sorted by CPU</span></div>
-        <table>
-          <thead><tr><th>PID</th><th>Command</th><th>CPU%</th><th>MEM%</th><th>RSS</th><th>Stat</th></tr></thead>
-          <tbody id="process-body"></tbody>
-        </table>
-      </div>
-      <div class="panel span-4" id="panel-gpu">
-        <div class="section-head"><h2>GPU Cards</h2><span class="tiny">nvidia-smi</span></div>
-        <div class="gpu-card" id="gpu-box"></div>
-        <div style="margin-top: 12px;">
-          <div class="section-head"><h2>GPU Processes</h2><span class="tiny">active compute</span></div>
-          <div class="gpu-card" id="gpu-proc-box"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="footer">
-      <span id="footer">Loading...</span>
-      <span id="alert-status"></span>
-    </div>
-
-  </div>
-
-  <script>
-    // ---- State ----
-    const historyLimit = 120;
-    const cpuHistory = [];
-    const memHistory = [];
-    const netHistory = [];
-    const gpuUtilHistory = [];
-    const gpuMemHistory = [];
-    const gpuTempHistory = [];
-    const gpuPowerHistory = [];
-    const diskReadHistory = [];
-    const diskWriteHistory = [];
-    const iowaitHistory = [];
-    let refreshInterval = 2000;
-    let refreshTimer = null;
-    let lastGpuWasActive = null;
-
-    // ---- Training timer ----
-    let timerRunning = false;
-    let timerStart = null;
-    let timerElapsed = 0;
-    let timerAnimFrame = null;
-
-    (function restoreTimer() {
-      const saved = localStorage.getItem('training_timer');
-      if (saved) {
-        const d = JSON.parse(saved);
-        timerElapsed = d.elapsed || 0;
-        if (d.running && d.start) {
-          timerRunning = true;
-          timerStart = d.start;
-          timerElapsed = d.elapsed;
-          document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('timer-toggle').textContent = '⏸ Pause';
-            tickTimer();
-          });
-        }
-      }
-    })();
-
-    function toggleTimer() {
-      if (timerRunning) {
-        timerElapsed += (Date.now() - timerStart);
-        timerRunning = false;
-        timerStart = null;
-        document.getElementById('timer-toggle').textContent = '▶ Resume';
-        cancelAnimationFrame(timerAnimFrame);
-      } else {
-        timerRunning = true;
-        timerStart = Date.now();
-        document.getElementById('timer-toggle').textContent = '⏸ Pause';
-        tickTimer();
-      }
-      saveTimer();
-    }
-    function resetTimer() {
-      timerRunning = false;
-      timerStart = null;
-      timerElapsed = 0;
-      document.getElementById('timer-toggle').textContent = '▶ Start Timer';
-      document.getElementById('timer-display').textContent = '00:00:00';
-      cancelAnimationFrame(timerAnimFrame);
-      saveTimer();
-    }
-    function tickTimer() {
-      if (!timerRunning) return;
-      const total = timerElapsed + (Date.now() - timerStart);
-      const secs = Math.floor(total / 1000);
-      const h = String(Math.floor(secs / 3600)).padStart(2, '0');
-      const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
-      const s = String(secs % 60).padStart(2, '0');
-      document.getElementById('timer-display').textContent = `${h}:${m}:${s}`;
-      timerAnimFrame = requestAnimationFrame(tickTimer);
-    }
-    function saveTimer() {
-      localStorage.setItem('training_timer', JSON.stringify({
-        running: timerRunning, start: timerStart, elapsed: timerElapsed
-      }));
-    }
-
-    // ---- Refresh interval slider ----
-    document.addEventListener('DOMContentLoaded', () => {
-      const slider = document.getElementById('refresh-slider');
-      slider.addEventListener('input', () => {
-        const val = parseInt(slider.value);
-        document.getElementById('refresh-val').textContent = val;
-        refreshInterval = val * 1000;
-        clearInterval(refreshTimer);
-        refreshTimer = setInterval(refresh, refreshInterval);
-      });
-    });
-
-    // ---- Helpers ----
-    function formatBytes(value) {
-      const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-      let size = Math.max(0, value);
-      let idx = 0;
-      while (size >= 1024 && idx < units.length - 1) { size /= 1024; idx++; }
-      return `${size.toFixed(1)} ${units[idx]}`;
-    }
-    function formatDuration(seconds) {
-      const total = Math.max(0, Math.floor(seconds));
-      const d = Math.floor(total / 86400), h = Math.floor((total % 86400) / 3600);
-      const m = Math.floor((total % 3600) / 60), s = total % 60;
-      if (d > 0) return `${d}d ${h}h ${m}m`;
-      if (h > 0) return `${h}h ${m}m ${s}s`;
-      if (m > 0) return `${m}m ${s}s`;
-      return `${s}s`;
-    }
-    function pushHistory(target, value) {
-      target.push(value);
-      if (target.length > historyLimit) target.shift();
-    }
-
-    // ---- Chart rendering ----
-    function renderChart(svgId, datasets) {
-      const svg = document.getElementById(svgId);
-      if (!svg) return;
-      const width = 600, height = 120;
-      let html = '';
-      datasets.forEach(({values, color, fillColor}, di) => {
-        if (!values.length) return;
-        const max = Math.max(100, ...values, 1);
-        const stepX = values.length > 1 ? width / (values.length - 1) : width;
-        const points = values.map((v, i) => {
-          const x = i * stepX;
-          const y = height - ((v / max) * (height - 20)) - 10;
-          return `${x.toFixed(1)},${y.toFixed(1)}`;
-        }).join(' ');
-        const gradId = `${svgId}-grad-${di}`;
-        html += `<defs><linearGradient id="${gradId}" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stop-color="${fillColor}" stop-opacity="0.7"/>
-          <stop offset="100%" stop-color="${fillColor}" stop-opacity="0.05"/>
-        </linearGradient></defs>`;
-        html += `<polygon class="chart-area" points="${points} ${width},${height} 0,${height}" fill="url(#${gradId})"></polygon>`;
-        html += `<polyline class="chart-line" points="${points}" stroke="${color}"></polyline>`;
-      });
-      svg.innerHTML = html;
-    }
-
-    // ---- Heatmap ----
-    function renderHeatmap(containerId, coreData) {
-      const el = document.getElementById(containerId);
-      if (!coreData) { el.innerHTML = ''; return; }
-      const entries = Object.entries(coreData).sort((a, b) =>
-        parseInt(a[0].replace('cpu', '')) - parseInt(b[0].replace('cpu', ''))
-      );
-      document.getElementById('core-count').textContent = `${entries.length} cores`;
-      el.innerHTML = entries.map(([core, pct]) => {
-        const hue = 120 - (pct * 1.2);
-        const bg = `hsl(${Math.max(0, hue)}, 75%, ${35 + pct * 0.15}%)`;
-        return `<div class="heatmap-cell" style="background:${bg};" title="${core}: ${pct.toFixed(1)}%">${parseInt(core.replace('cpu',''))}</div>`;
-      }).join('');
-    }
-
-    // ---- Process table ----
-    function renderProcessTable(processes) {
-      const body = document.getElementById('process-body');
-      body.innerHTML = processes.map(p => `
-        <tr><td>${p.pid}</td><td>${p.name}</td><td>${Number(p.cpu).toFixed(1)}</td>
-        <td>${Number(p.mem).toFixed(1)}</td><td>${p.rss}</td><td>${p.stat || ''}</td></tr>
-      `).join('');
-    }
-
-    // ---- GPU cards ----
-    function renderGpu(gpus) {
-      const box = document.getElementById('gpu-box');
-      if (!gpus.length) { box.innerHTML = '<div class="gpu-item">No NVIDIA GPU data found.</div>'; return; }
-      box.innerHTML = gpus.map(g => {
-        const temp = parseFloat(g.temperature);
-        const tempColor = temp > 85 ? 'var(--danger)' : temp > 70 ? 'var(--warn)' : 'var(--good)';
-        return `<div class="gpu-item">
-          <div style="font-weight:700; margin-bottom:4px;">${g.name} #${g.index}</div>
-          <div class="tiny">Core: ${g.utilization}% · Mem Util: ${g.memory_utilization}%</div>
-          <div class="tiny">VRAM: ${g.memory_used} / ${g.memory_total} MB</div>
-          <div class="tiny">Temp: <span style="color:${tempColor};font-weight:600;">${g.temperature}°C</span> · Fan: ${g.fan_speed}%</div>
-          <div class="tiny">Power: ${g.power_draw} / ${g.power_limit} W</div>
-          <div class="tiny">Clock: ${g.clock_sm} / ${g.clock_sm_max} MHz</div>
-        </div>`;
-      }).join('');
-    }
-
-    // ---- GPU processes ----
-    function renderGpuProcesses(procs) {
-      const box = document.getElementById('gpu-proc-box');
-      if (!procs.length) { box.innerHTML = '<div class="gpu-item" style="font-size:0.82rem;">No active GPU compute processes.</div>'; return; }
-      box.innerHTML = procs.map(p =>
-        `<div class="gpu-item"><span style="font-weight:600;">PID ${p.pid}</span> · ${p.name} · <span style="color:var(--accent);">${p.gpu_mem_mb} MB</span></div>`
-      ).join('');
-    }
-
-    // ---- Threshold alerts ----
-    function checkAlerts(data) {
-      const alertsOn = document.getElementById('alert-toggle').value === 'on';
-      const statsCard = document.getElementById('stats-card');
-      const panelGpu = document.getElementById('panel-gpu');
-      const panelMem = document.getElementById('panel-mem');
-      const panelCpu = document.getElementById('panel-cpu');
-      const statusEl = document.getElementById('alert-status');
-      let alerts = [];
-
-      [statsCard, panelGpu, panelMem, panelCpu].forEach(el => el && el.classList.remove('alert-active'));
-
-      if (!alertsOn) { statusEl.textContent = ''; return; }
-
-      if (data.memory.percent > 90) { alerts.push('⚠️ Memory > 90%'); panelMem && panelMem.classList.add('alert-active'); }
-      if (data.cpu_percent > 95) { alerts.push('⚠️ CPU > 95%'); panelCpu && panelCpu.classList.add('alert-active'); }
-
-      const hasGpu = Array.isArray(data.gpu) && data.gpu.length > 0;
-      if (hasGpu) {
-        data.gpu.forEach(g => {
-          const t = parseFloat(g.temperature);
-          if (t > 85) { alerts.push(`🔥 GPU#${g.index} Temp ${t}°C`); panelGpu && panelGpu.classList.add('alert-active'); }
-        });
-      }
-
-      statusEl.textContent = alerts.length ? alerts.join(' | ') : '✅ All clear';
-      statusEl.style.color = alerts.length ? 'var(--danger)' : 'var(--good)';
-    }
-
-    // ---- Browser notifications ----
-    function checkNotifications(data) {
-      if (document.getElementById('notif-toggle').value !== 'on') return;
-      const hasGpu = Array.isArray(data.gpu) && data.gpu.length > 0;
-      if (!hasGpu) return;
-      const maxUtil = Math.max(...data.gpu.map(g => parseFloat(g.utilization) || 0));
-      const isActive = maxUtil > 5;
-
-      if (lastGpuWasActive === true && !isActive) {
-        if (Notification.permission === 'granted') {
-          new Notification('🏁 GPU Idle', { body: 'GPU utilization dropped to ~0%. Training may have finished or crashed.' });
-        }
-      }
-      lastGpuWasActive = isActive;
-    }
-
-    // Request notification permission on toggle
-    document.addEventListener('DOMContentLoaded', () => {
-      document.getElementById('notif-toggle').addEventListener('change', function() {
-        if (this.value === 'on' && Notification.permission === 'default') {
-          Notification.requestPermission();
-        }
-      });
-    });
-
-    // ---- Main refresh ----
-    async function refresh() {
-      try {
-        const response = await fetch('/api/metrics');
-        const data = await response.json();
-
-        document.getElementById('host-pill').textContent = `Host: ${data.host} (${data.active_user})`;
-        document.getElementById('platform-pill').textContent = `Platform: ${data.platform}`;
-        document.getElementById('uptime-pill').textContent = `Uptime: ${formatDuration(data.uptime_seconds)}`;
-        document.getElementById('footer').textContent = `Updated at ${new Date(data.timestamp * 1000).toLocaleTimeString()}`;
-
-        if (data.zombies > 0) {
-          const zp = document.getElementById('zombie-pill');
-          zp.style.display = '';
-          zp.textContent = `🧟 Zombies: ${data.zombies}`;
-        } else {
-          document.getElementById('zombie-pill').style.display = 'none';
-        }
-
-        // Bars
-        document.getElementById('cpu-value').textContent = `${data.cpu_percent.toFixed(1)}%`;
-        document.getElementById('iowait-value').textContent = `${data.iowait_percent.toFixed(1)}%`;
-        document.getElementById('mem-value').textContent = `${data.memory.percent.toFixed(1)}%`;
-        document.getElementById('disk-value').textContent = `${data.disk.percent.toFixed(1)}%`;
-        document.getElementById('net-value').textContent = `${formatBytes(data.network.rx_rate)}/s ↓ · ${formatBytes(data.network.tx_rate)}/s ↑`;
-
-        document.getElementById('cpu-fill').style.width = `${data.cpu_percent}%`;
-        document.getElementById('iowait-fill').style.width = `${Math.min(100, data.iowait_percent)}%`;
-        document.getElementById('mem-fill').style.width = `${data.memory.percent}%`;
-        document.getElementById('disk-fill').style.width = `${data.disk.percent}%`;
-        document.getElementById('net-fill').style.width = `${Math.min(100, (data.network.rx_rate + data.network.tx_rate) / (1024 * 1024) * 6)}%`;
-
-        // GPU bars
-        let gpuCoreUtil = 0, gpuMemUtil = 0, hasGpu = Array.isArray(data.gpu) && data.gpu.length > 0;
-        if (hasGpu) {
-          const cu = data.gpu.map(g => Number(g.utilization)).filter(Number.isFinite);
-          const mu = data.gpu.map(g => Number(g.memory_utilization)).filter(Number.isFinite);
-          if (cu.length) gpuCoreUtil = cu.reduce((a, b) => a + b, 0) / cu.length;
-          if (mu.length) gpuMemUtil = mu.reduce((a, b) => a + b, 0) / mu.length;
-        }
-        document.getElementById('gpu-core-value').textContent = hasGpu ? `${gpuCoreUtil.toFixed(1)}%` : 'N/A';
-        document.getElementById('gpu-mem-value').textContent = hasGpu ? `${gpuMemUtil.toFixed(1)}%` : 'N/A';
-        document.getElementById('gpu-core-fill').style.width = hasGpu ? `${gpuCoreUtil}%` : '0%';
-        document.getElementById('gpu-mem-fill').style.width = hasGpu ? `${gpuMemUtil}%` : '0%';
-
-        // Histories
-        pushHistory(cpuHistory, data.cpu_percent);
-        pushHistory(iowaitHistory, data.iowait_percent);
-        pushHistory(memHistory, data.memory.percent);
-        pushHistory(netHistory, Math.min(100, ((data.network.rx_rate + data.network.tx_rate) / (1024 * 1024)) * 10));
-        pushHistory(gpuUtilHistory, gpuCoreUtil);
-        pushHistory(gpuMemHistory, gpuMemUtil);
-        const gth = data.gpu_history;
-        pushHistory(gpuTempHistory, gth && gth.temp && gth.temp.length ? gth.temp[gth.temp.length-1] : 0);
-        pushHistory(gpuPowerHistory, gth && gth.power && gth.power.length ? gth.power[gth.power.length-1] : 0);
-        pushHistory(diskReadHistory, data.disk_io.read_rate);
-        pushHistory(diskWriteHistory, data.disk_io.write_rate);
-
-        // Charts
-        renderChart('cpu-chart', [
-          { values: cpuHistory, color: '#60a5fa', fillColor: '#60a5fa' },
-          { values: iowaitHistory, color: '#f97316', fillColor: '#f97316' },
-        ]);
-        renderChart('mem-chart', [{ values: memHistory, color: '#fbbf24', fillColor: '#fbbf24' }]);
-        renderChart('net-chart', [
-          { values: data.network.rx_history.map(v => Math.min(v / 1024, 1000)), color: '#4ade80', fillColor: '#4ade80' },
-          { values: data.network.tx_history.map(v => Math.min(v / 1024, 1000)), color: '#60a5fa', fillColor: '#60a5fa' },
-        ]);
-        renderChart('gpu-util-chart', [{ values: gpuUtilHistory, color: '#22d3ee', fillColor: '#22d3ee' }]);
-        renderChart('gpu-extra-chart', [
-          { values: gpuMemHistory, color: '#4ade80', fillColor: '#4ade80' },
-          { values: gpuTempHistory, color: '#f97316', fillColor: '#f97316' },
-          { values: gpuPowerHistory, color: '#60a5fa', fillColor: '#60a5fa' },
-        ]);
-        renderChart('diskio-chart', [
-          { values: diskReadHistory.map(v => v / 1024), color: '#4ade80', fillColor: '#4ade80' },
-          { values: diskWriteHistory.map(v => v / 1024), color: '#60a5fa', fillColor: '#60a5fa' },
-        ]);
-        document.getElementById('diskio-rates').textContent =
-          `R: ${formatBytes(data.disk_io.read_rate)}/s · W: ${formatBytes(data.disk_io.write_rate)}/s`;
-
-        // Heatmap
-        renderHeatmap('cpu-heatmap', data.cpu_cores);
-
-        // Memory details
-        const m = data.memory;
-        document.getElementById('mem-details').innerHTML = `
-          <div>Used: ${formatBytes(m.used)} / ${formatBytes(m.total)}</div>
-          <div>Swap: ${formatBytes(m.swap_used)} / ${formatBytes(m.swap_total)} (${m.swap_percent.toFixed(1)}%)</div>
-          <div>Cached: ${formatBytes(m.cached)}</div>
-          <div>Buffers: ${formatBytes(m.buffers)}</div>
-          <div>Slab: ${formatBytes(m.slab)}</div>
-        `;
-
-        // System info box
-        const temps = (data.cpu_temps || []).map(t => `${t.type}: <span style="font-weight:600;color:${t.temp_c > 80 ? 'var(--danger)' : t.temp_c > 60 ? 'var(--warn)' : 'var(--good)'};">${t.temp_c}°C</span>`).join('<br>');
-        document.getElementById('sysinfo-box').innerHTML = `
-          <div class="gpu-item"><div class="label">Load Average</div>
-            1m: ${data.load_average['1m'].toFixed(2)} · 5m: ${data.load_average['5m'].toFixed(2)} · 15m: ${data.load_average['15m'].toFixed(2)}</div>
-          <div class="gpu-item"><div class="label">Disk</div>
-            ${data.disk.path}<br>Used: ${formatBytes(data.disk.used)} / ${formatBytes(data.disk.total)}<br>Free: ${formatBytes(data.disk.free)}</div>
-          <div class="gpu-item"><div class="label">Temperatures</div>${temps || 'No thermal data'}</div>
-          <div class="gpu-item"><div class="label">Scheduler</div>
-            Running: ${data.procs_running} · Blocked: ${data.procs_blocked}<br>
-            Ctx switches: ${Math.round(data.ctxt_rate)}/s</div>
-        `;
-
-        renderProcessTable(data.processes);
-        renderGpu(data.gpu);
-        renderGpuProcesses(data.gpu_processes || []);
-        checkAlerts(data);
-        checkNotifications(data);
-      } catch (err) {
-        console.error('Refresh error:', err);
-      }
-    }
-
-    refresh();
-    refreshTimer = setInterval(refresh, refreshInterval);
-  </script>
-</body>
-</html>
-"""
+HTML_TEMPLATE = get_html_template()
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "ResourceDashboard/2.0"
 
+    def _add_security_headers(self, is_api: bool = False) -> None:
+        """Add common security headers to every response."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        if is_api:
+            host = self.headers.get("Host", f"{self.server.server_address[0]}:{self.server.server_address[1]}")
+            self.send_header("Access-Control-Allow-Origin", f"http://{host}")
+
     def _send_json(self, payload: Dict[str, object]) -> None:
-        data = json.dumps(payload).encode("utf-8")
+        data = json.dumps(sanitize_for_json(payload)).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self._add_security_headers(is_api=True)
         self.end_headers()
         self.wfile.write(data)
 
@@ -1246,6 +658,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self._add_security_headers()
         self.end_headers()
         self.wfile.write(data)
 
@@ -1255,10 +668,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/csv; charset=utf-8")
         self.send_header("Content-Disposition", "attachment; filename=resource_metrics.csv")
         self.send_header("Content-Length", str(len(data)))
+        self._add_security_headers(is_api=True)
         self.end_headers()
         self.wfile.write(data)
 
     def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        # Auth check
+        expected_auth = getattr(self.server, 'auth', None)
+        if expected_auth:
+            auth_header = self.headers.get('Authorization')
+            if not auth_header or not auth_header.startswith('Basic '):
+                self.send_response(401)
+                self.send_header('WWW-Authenticate', 'Basic realm="Dashboard"')
+                self.end_headers()
+                self.wfile.write(b"Authentication required")
+                return
+            
+            encoded = auth_header.split(' ', 1)[1]
+            try:
+                decoded = base64.b64decode(encoded).decode('utf-8')
+                if decoded != expected_auth:
+                    raise ValueError("Invalid auth")
+            except Exception:
+                self.send_response(401)
+                self.send_header('WWW-Authenticate', 'Basic realm="Dashboard"')
+                self.end_headers()
+                self.wfile.write(b"Authentication failed")
+                return
+
         parsed = urlparse(self.path)
         if parsed.path == "/":
             self._send_html(HTML_TEMPLATE)
@@ -1284,11 +721,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root", default=str(Path.home()), help="Filesystem root to summarize for disk usage.")
     parser.add_argument("--top", type=int, default=DEFAULT_TOP_PROCESSES, help="Number of top processes to display.")
     parser.add_argument("--no-browser", action="store_true", help="Do not open the dashboard automatically in a browser.")
+    parser.add_argument("--auth", help="Basic auth credentials in format user:pass")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    
+    # Setup logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    # Load config
+    config = configparser.ConfigParser()
+    config_path = Path.home() / '.config' / 'resource-dashboard' / 'config.ini'
+    if config_path.exists():
+        config.read(config_path)
+        if 'Server' in config:
+            args.host = config['Server'].get('host', args.host)
+            args.port = config['Server'].getint('port', args.port)
+            args.auth = config['Server'].get('auth', getattr(args, 'auth', None))
     sample_root = Path(args.root).expanduser().resolve()
     if not sample_root.exists():
         raise SystemExit(f"Path does not exist: {sample_root}")
@@ -1296,10 +747,11 @@ def main() -> None:
     server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     server.sample_root = sample_root  # type: ignore[attr-defined]
     server.top_limit = args.top  # type: ignore[attr-defined]
+    server.auth = args.auth  # type: ignore[attr-defined]
 
     url = f"http://{args.host}:{args.port}/"
-    print(f"Serving resource dashboard at {url}")
-    print(f"Monitoring disk path: {sample_root}")
+    logging.info(f"Serving resource dashboard at {url}")
+    logging.info(f"Monitoring disk path: {sample_root}")
 
     if not args.no_browser:
       webbrowser.open(url)
@@ -1307,7 +759,7 @@ def main() -> None:
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nShutting down resource dashboard...")
+        logging.info("Shutting down resource dashboard...")
     finally:
         server.server_close()
 

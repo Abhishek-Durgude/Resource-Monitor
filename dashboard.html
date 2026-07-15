@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Resource Dashboard – AIIMS Rishikesh</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖥️</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: rgba(15, 23, 42, 0.88);
+      --panel-border: rgba(148, 163, 184, 0.18);
+      --text: #e5eefc;
+      --muted: #92a2bf;
+      --accent: #5eead4;
+      --accent-2: #60a5fa;
+      --warn: #fbbf24;
+      --danger: #fb7185;
+      --good: #4ade80;
+    }
+
+    [data-theme="light"] {
+      --bg: #f0f4f8;
+      --panel: rgba(255, 255, 255, 0.92);
+      --panel-border: rgba(148, 163, 184, 0.25);
+      --text: #1e293b;
+      --muted: #64748b;
+      --accent: #0d9488;
+      --accent-2: #2563eb;
+      --warn: #d97706;
+      --danger: #e11d48;
+      --good: #16a34a;
+    }
+    [data-theme="light"] body {
+      background: linear-gradient(135deg, #f0f4f8 0%, #e2e8f0 50%, #cbd5e1 100%);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(96, 165, 250, 0.18), transparent 28%),
+        radial-gradient(circle at 80% 10%, rgba(94, 234, 212, 0.12), transparent 24%),
+        linear-gradient(180deg, #070b16 0%, #0b1020 56%, #111827 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .wrap { max-width: 1520px; margin: 0 auto; padding: 24px; }
+
+    /* --- Hero --- */
+    .hero {
+      display: grid;
+      grid-template-columns: 1.3fr 0.9fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .title-card, .stats-card, .panel {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 20px;
+      box-shadow: 0 18px 45px rgba(0,0,0,0.28);
+      backdrop-filter: blur(12px);
+      transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+    }
+    .panel:hover, .title-card:hover, .stats-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 24px 55px rgba(0,0,0,0.35), 0 0 30px rgba(94, 234, 212, 0.08);
+      border-color: rgba(94, 234, 212, 0.25);
+    }
+    .title-card { padding: 24px; }
+    h1 { margin: 0 0 10px; font-size: clamp(1.8rem, 3.5vw, 3rem); letter-spacing: -0.03em; font-weight: 800; }
+    .subtitle { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.55; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; color: var(--muted); font-size: 0.9rem; }
+    .pill { padding: 6px 12px; border-radius: 999px; background: rgba(96, 165, 250, 0.12); border: 1px solid rgba(96, 165, 250, 0.25); }
+    .stats-card { padding: 16px 20px; display: grid; gap: 8px; align-content: center; }
+    .stat-row { display: grid; grid-template-columns: 130px 1fr auto; gap: 10px; align-items: center; }
+    .label { color: var(--muted); font-size: 0.88rem; }
+    .value { font-weight: 700; font-size: 0.95rem; white-space: nowrap; }
+
+    /* --- Bars --- */
+    .bar {
+      height: 12px; border-radius: 999px; overflow: hidden;
+      background: rgba(148, 163, 184, 0.16);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+    .fill { height: 100%; width: 0%; border-radius: inherit; transition: width 0.35s ease; }
+
+    /* --- Grid layout --- */
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; margin-bottom: 14px; }
+    .panel { padding: 16px; }
+    .span-3 { grid-column: span 3; }
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+    .panel h2 { margin: 0 0 10px; font-size: 1rem; letter-spacing: 0.02em; font-weight: 700; }
+    .chart { width: 100%; height: 120px; }
+    .chart-line { fill: none; stroke-width: 2; }
+    .chart-area { fill-opacity: 0.18; }
+    .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+    .tiny { color: var(--muted); font-size: 0.82rem; }
+
+    /* --- Tables --- */
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid rgba(148, 163, 184, 0.14); font-size: 0.88rem; }
+    th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }
+
+    .grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .gpu-card { display: grid; gap: 8px; }
+    .gpu-item { padding: 10px; border-radius: 14px; background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.12); }
+
+    /* --- Alert flashing --- */
+    @keyframes alert-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(251, 113, 133, 0); }
+      50% { box-shadow: 0 0 20px 4px rgba(251, 113, 133, 0.5); }
+    }
+    .alert-active { animation: alert-pulse 1.4s ease-in-out infinite; border-color: var(--danger) !important; }
+
+    /* --- Heatmap cells --- */
+    .heatmap-grid { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 8px; }
+    .heatmap-cell {
+      width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center;
+      font-size: 0.65rem; font-weight: 600; color: #fff; transition: background 0.3s ease;
+    }
+
+    /* --- Training timer --- */
+    .timer-box {
+      display: flex; align-items: center; gap: 10px; margin-top: 12px;
+    }
+    .timer-btn {
+      padding: 6px 16px; border-radius: 10px; border: 1px solid var(--panel-border);
+      background: rgba(94, 234, 212, 0.15); color: var(--accent); cursor: pointer;
+      font-size: 0.85rem; font-weight: 600; transition: background 0.2s;
+    }
+    .timer-btn:hover { background: rgba(94, 234, 212, 0.3); }
+    .timer-btn.stop { background: rgba(251, 113, 133, 0.15); color: var(--danger); }
+    .timer-btn.stop:hover { background: rgba(251, 113, 133, 0.3); }
+    .timer-display { font-size: 1.6rem; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 0.03em; }
+
+    /* --- Toolbar --- */
+    .toolbar {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px;
+      padding: 10px 16px; border-radius: 14px;
+      background: rgba(15, 23, 42, 0.6); border: 1px solid var(--panel-border);
+    }
+    .toolbar label { font-size: 0.85rem; color: var(--muted); }
+    .toolbar select, .toolbar input[type=range] {
+      background: rgba(148,163,184,0.12); border: 1px solid var(--panel-border);
+      color: var(--text); border-radius: 8px; padding: 4px 8px; font-size: 0.85rem;
+    }
+    .export-btn {
+      margin-left: auto;
+      padding: 6px 16px; border-radius: 10px; border: 1px solid rgba(96, 165, 250, 0.35);
+      background: rgba(96, 165, 250, 0.12); color: var(--accent-2); cursor: pointer;
+      font-size: 0.85rem; font-weight: 600; text-decoration: none; transition: background 0.2s;
+    }
+    .export-btn:hover { background: rgba(96, 165, 250, 0.3); }
+
+    .gauge-fill { fill: none; stroke-width: 10; stroke-linecap: round; stroke-dasharray: 326.73; stroke-dashoffset: 326.73; transition: stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
+    .gauge-label { font-size: 0.75rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .gauge-value { font-size: 1.1rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .gauge-extra { display: flex; justify-content: center; gap: 16px; margin-top: 6px; font-size: 0.78rem; color: var(--muted); }
+    .gauge-extra b { color: var(--text); font-weight: 700; }
+
+    /* --- Health Score --- */
+    .health-score-box { margin-top: 8px; padding: 10px; border-radius: 12px; background: rgba(148, 163, 184, 0.06); border: 1px solid rgba(148, 163, 184, 0.1); text-align: center; }
+    .health-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+    .health-value { font-size: 2.2rem; font-weight: 800; font-variant-numeric: tabular-nums; background: linear-gradient(135deg, var(--good), var(--accent)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .health-bar { height: 6px; border-radius: 999px; background: rgba(148, 163, 184, 0.15); margin-top: 6px; overflow: hidden; }
+    .health-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--good), var(--accent)); transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); width: 100%; }
+
+    /* --- Micro-interactions --- */
+    .gpu-item { transition: transform 0.2s ease, background 0.2s ease; }
+    .gpu-item:hover { transform: scale(1.02); background: rgba(148, 163, 184, 0.14); }
+    .heatmap-cell { transition: transform 0.15s ease, background 0.3s ease; }
+    .heatmap-cell:hover { transform: scale(1.25); z-index: 2; }
+    table tbody tr { transition: background 0.2s ease; }
+    table tbody tr:hover { background: rgba(94, 234, 212, 0.06); }
+    .pill { transition: transform 0.2s ease, background 0.2s ease; }
+    .pill:hover { transform: translateY(-1px); background: rgba(96, 165, 250, 0.2); }
+    .timer-btn { transition: all 0.2s ease; }
+    .timer-btn:active { transform: scale(0.95); }
+
+    /* --- Chart tooltip --- */
+    .chart-tooltip {
+      position: fixed; pointer-events: none; z-index: 1000;
+      padding: 6px 12px; border-radius: 8px;
+      background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(148, 163, 184, 0.2);
+      color: var(--text); font-size: 0.78rem; font-weight: 600;
+      backdrop-filter: blur(8px); opacity: 0; transition: opacity 0.15s ease;
+      font-variant-numeric: tabular-nums;
+    }
+    .chart-tooltip.visible { opacity: 1; }
+
+    @media (max-width: 1100px) {
+      .hero, .grid-two { grid-template-columns: 1fr; }
+      .span-3, .span-4, .span-6, .span-8 { grid-column: span 12; }
+      .gauge-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <label>Refresh: <span id="refresh-val">2</span>s</label>
+      <input type="range" id="refresh-slider" min="1" max="10" value="2" step="1" />
+      <label style="margin-left: 12px;">🔔 Alerts</label>
+      <select id="alert-toggle">
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>
+      <label style="margin-left: 12px;">🔕 Notifications</label>
+      <select id="notif-toggle">
+        <option value="off">Off</option>
+        <option value="on">On</option>
+      </select>
+      <button class="export-btn" id="theme-toggle" onclick="toggleTheme()" style="margin-left:8px;">🌙 Dark</button>
+      <a class="export-btn" href="/api/export_csv" download="resource_metrics.csv">📥 Export CSV</a>
+      <button class="export-btn" id="alert-settings-btn" onclick="toggleAlertSettings()" style="margin-left:8px;">⚙️ Thresholds</button>
+    </div>
+
+    <div class="alert-settings" id="alert-settings" style="display:none;">
+      <div class="alert-settings-grid">
+        <label>CPU Warning %<input type="number" id="thresh-cpu" value="95" min="0" max="100" /></label>
+        <label>Memory Warning %<input type="number" id="thresh-mem" value="90" min="0" max="100" /></label>
+        <label>GPU Temp °C<input type="number" id="thresh-gpu-temp" value="85" min="0" max="120" /></label>
+        <label>IO-Wait %<input type="number" id="thresh-iowait" value="30" min="0" max="100" /></label>
+      </div>
+    </div>
+
+    <!-- Hero -->
+    <div class="hero">
+      <div class="title-card">
+        <h1>🖥️ Resource Dashboard</h1>
+        <p class="subtitle">Live local monitor for CPU, memory, disk I/O, network, GPU, and training workloads. Designed for the AIIMS Rishikesh burn image generation pipeline.</p>
+        <div class="meta">
+          <span class="pill" id="host-pill">Host: loading...</span>
+          <span class="pill" id="platform-pill">Platform: loading...</span>
+          <span class="pill" id="uptime-pill">Uptime: loading...</span>
+          <span class="pill" id="zombie-pill" style="display:none;">🧟 Zombies: 0</span>
+        </div>
+        <!-- Training timer -->
+        <div class="timer-box">
+          <button class="timer-btn" id="timer-toggle" onclick="toggleTimer()">▶ Start Timer</button>
+          <button class="timer-btn stop" id="timer-reset" onclick="resetTimer()">↺ Reset</button>
+          <div class="timer-display" id="timer-display">00:00:00</div>
+        </div>
+      </div>
+      <div class="stats-card" id="stats-card">
+        <div class="gauge-grid">
+          <div class="gauge-item">
+            <svg class="gauge-ring" viewBox="0 0 120 120">
+              <circle class="gauge-bg" cx="60" cy="60" r="52" />
+              <circle class="gauge-fill" id="cpu-ring" cx="60" cy="60" r="52" style="stroke: url(#grad-cpu);" />
+              <defs><linearGradient id="grad-cpu" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#5eead4"/><stop offset="100%" stop-color="#60a5fa"/></linearGradient></defs>
+            </svg>
+            <div class="gauge-label">CPU</div>
+            <div class="gauge-value" id="cpu-value">0%</div>
+          </div>
+          <div class="gauge-item">
+            <svg class="gauge-ring" viewBox="0 0 120 120">
+              <circle class="gauge-bg" cx="60" cy="60" r="52" />
+              <circle class="gauge-fill" id="mem-ring" cx="60" cy="60" r="52" style="stroke: url(#grad-mem);" />
+              <defs><linearGradient id="grad-mem" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fbbf24"/><stop offset="100%" stop-color="#f97316"/></linearGradient></defs>
+            </svg>
+            <div class="gauge-label">Memory</div>
+            <div class="gauge-value" id="mem-value">0%</div>
+          </div>
+          <div class="gauge-item">
+            <svg class="gauge-ring" viewBox="0 0 120 120">
+              <circle class="gauge-bg" cx="60" cy="60" r="52" />
+              <circle class="gauge-fill" id="gpu-core-ring" cx="60" cy="60" r="52" style="stroke: url(#grad-gpu);" />
+              <defs><linearGradient id="grad-gpu" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#22d3ee"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
+            </svg>
+            <div class="gauge-label">GPU</div>
+            <div class="gauge-value" id="gpu-core-value">N/A</div>
+          </div>
+          <div class="gauge-item">
+            <svg class="gauge-ring" viewBox="0 0 120 120">
+              <circle class="gauge-bg" cx="60" cy="60" r="52" />
+              <circle class="gauge-fill" id="disk-ring" cx="60" cy="60" r="52" style="stroke: url(#grad-disk);" />
+              <defs><linearGradient id="grad-disk" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#a78bfa"/><stop offset="100%" stop-color="#60a5fa"/></linearGradient></defs>
+            </svg>
+            <div class="gauge-label">Disk</div>
+            <div class="gauge-value" id="disk-value">0%</div>
+          </div>
+        </div>
+        <div class="gauge-extra" id="gauge-extra">
+          <span>IO-Wait: <b id="iowait-value">0%</b></span>
+          <span>GPU Mem: <b id="gpu-mem-value">N/A</b></span>
+          <span>Net: <b id="net-value">0 B/s</b></span>
+        </div>
+        <div class="health-score-box">
+          <div class="health-label">System Health</div>
+          <div class="health-value" id="health-score">100</div>
+          <div class="health-bar"><div class="health-fill" id="health-fill"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 1: CPU Trend + IO-Wait, Memory Trend -->
+    <div class="grid">
+      <div class="panel span-6" id="panel-cpu">
+        <div class="section-head"><h2>CPU Trend</h2><span class="tiny">overall + io-wait</span></div>
+        <svg class="chart" id="cpu-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+        <div class="section-head" style="margin-top:10px;"><h2>Per-Core Heatmap</h2><span class="tiny" id="core-count"></span></div>
+        <div class="heatmap-grid" id="cpu-heatmap"></div>
+      </div>
+      <div class="panel span-6" id="panel-mem">
+        <div class="section-head"><h2>Memory Trend</h2><span class="tiny">used %</span></div>
+        <svg class="chart" id="mem-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+        <div id="mem-details" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 0.82rem; color: var(--muted);"></div>
+      </div>
+    </div>
+
+    <!-- Row 2: GPU Util Trend, GPU Mem / Temp / Power Trend -->
+    <div class="grid">
+      <div class="panel span-6">
+        <div class="section-head"><h2>GPU Utilization Trend</h2><span class="tiny">core % avg</span></div>
+        <svg class="chart" id="gpu-util-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="panel span-6">
+        <div class="section-head"><h2>GPU Memory / Temp / Power</h2><span class="tiny">history</span></div>
+        <svg class="chart" id="gpu-extra-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+        <div style="display: flex; gap: 14px; margin-top: 6px; font-size: 0.78rem; color: var(--muted);">
+          <span>🟢 Mem%</span><span>🟠 Temp°C</span><span>🔵 Power W</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 3: Network, Disk I/O -->
+    <div class="grid">
+      <div class="panel span-6">
+        <div class="section-head"><h2>Network Trend</h2><span class="tiny">rx / tx rates</span></div>
+        <svg class="chart" id="net-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="panel span-6">
+        <div class="section-head"><h2>Disk I/O Trend</h2><span class="tiny">read / write throughput</span></div>
+        <svg class="chart" id="diskio-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+        <div style="display: flex; gap: 14px; margin-top: 6px; font-size: 0.78rem; color: var(--muted);">
+          <span>🟢 Read</span><span>🔵 Write</span>
+          <span id="diskio-rates" style="margin-left:auto;"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 4: Disk/Load/Temp, Processes, GPU Cards -->
+    <div class="grid">
+      <div class="panel span-3">
+        <h2>System Info</h2>
+        <div class="gpu-card" id="sysinfo-box"></div>
+      </div>
+      <div class="panel span-5">
+        <div class="section-head"><h2>Top Processes</h2><span class="tiny">sorted by CPU</span></div>
+        <table>
+          <thead><tr><th>PID</th><th>Command</th><th>CPU%</th><th>MEM%</th><th>RSS</th><th>Stat</th></tr></thead>
+          <tbody id="process-body"></tbody>
+        </table>
+      </div>
+      <div class="panel span-4" id="panel-gpu">
+        <div class="section-head"><h2>GPU Cards</h2><span class="tiny">nvidia-smi</span></div>
+        <div class="gpu-card" id="gpu-box"></div>
+        <div style="margin-top: 12px;">
+          <div class="section-head"><h2>GPU Processes</h2><span class="tiny">active compute</span></div>
+          <div class="gpu-card" id="gpu-proc-box"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span id="footer">Loading...</span>
+      <span id="alert-status"></span>
+    </div>
+
+    <div class="panel" id="alert-history-panel" style="margin-top: 14px; display: none;">
+      <div class="section-head"><h2>Alert History</h2><span class="tiny"><button class="timer-btn" onclick="clearAlertHistory()" style="font-size:0.75rem; padding:3px 10px;">Clear</button></span></div>
+      <div id="alert-history-log" style="max-height: 160px; overflow-y: auto; font-size: 0.82rem; color: var(--muted);"></div>
+    </div>
+
+    <div class="chart-tooltip" id="chart-tooltip"></div>
+  </div>
+
+  <script>
+    // ---- Theme toggle ----
+    function toggleTheme() {
+      const html = document.documentElement;
+      const current = html.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      html.setAttribute('data-theme', next);
+      document.getElementById('theme-toggle').textContent = next === 'dark' ? '🌙 Dark' : '☀️ Light';
+      localStorage.setItem('dashboard_theme', next);
+    }
+    // Restore theme
+    (function() {
+      const saved = localStorage.getItem('dashboard_theme');
+      if (saved) {
+        document.documentElement.setAttribute('data-theme', saved);
+        document.addEventListener('DOMContentLoaded', () => {
+          document.getElementById('theme-toggle').textContent = saved === 'dark' ? '🌙 Dark' : '☀️ Light';
+        });
+      }
+    })();
+
+    // ---- Ring gauge helper ----
+    function setRingGauge(id, percent) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const circumference = 326.73;
+      const offset = circumference * (1 - Math.min(100, Math.max(0, percent)) / 100);
+      el.style.strokeDashoffset = offset;
+    }
+
+    // ---- XSS-safe HTML escaping ----
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    // ---- Animated number counters ----
+    function animateValue(elementId, newValue, suffix, decimals) {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      const current = parseFloat(el.textContent) || 0;
+      const target = parseFloat(newValue) || 0;
+      if (Math.abs(current - target) < 0.1) {
+        el.textContent = target.toFixed(decimals || 1) + (suffix || '');
+        return;
+      }
+      const duration = 400;
+      const start = performance.now();
+      function tick(now) {
+        const elapsed = now - start;
+        const progress = Math.min(elapsed / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+        const value = current + (target - current) * eased;
+        el.textContent = value.toFixed(decimals || 1) + (suffix || '');
+        if (progress < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    }
+
+    // ---- State ----
+    const historyLimit = 120;
+    const cpuHistory = [];
+    const memHistory = [];
+    const netHistory = [];
+    const gpuUtilHistory = [];
+    const gpuMemHistory = [];
+    const gpuTempHistory = [];
+    const gpuPowerHistory = [];
+    const diskReadHistory = [];
+    const diskWriteHistory = [];
+    const iowaitHistory = [];
+    let refreshInterval = 2000;
+    let refreshTimer = null;
+    let lastGpuWasActive = null;
+
+    // ---- Training timer ----
+    let timerRunning = false;
+    let timerStart = null;
+    let timerElapsed = 0;
+    let timerAnimFrame = null;
+
+    (function restoreTimer() {
+      const saved = localStorage.getItem('training_timer');
+      if (saved) {
+        const d = JSON.parse(saved);
+        timerElapsed = d.elapsed || 0;
+        if (d.running && d.start) {
+          timerRunning = true;
+          timerStart = d.start;
+          timerElapsed = d.elapsed;
+          document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('timer-toggle').textContent = '⏸ Pause';
+            tickTimer();
+          });
+        }
+      }
+    })();
+
+    function toggleTimer() {
+      if (timerRunning) {
+        timerElapsed += (Date.now() - timerStart);
+        timerRunning = false;
+        timerStart = null;
+        document.getElementById('timer-toggle').textContent = '▶ Resume';
+        cancelAnimationFrame(timerAnimFrame);
+      } else {
+        timerRunning = true;
+        timerStart = Date.now();
+        document.getElementById('timer-toggle').textContent = '⏸ Pause';
+        tickTimer();
+      }
+      saveTimer();
+    }
+    function resetTimer() {
+      timerRunning = false;
+      timerStart = null;
+      timerElapsed = 0;
+      document.getElementById('timer-toggle').textContent = '▶ Start Timer';
+      document.getElementById('timer-display').textContent = '00:00:00';
+      cancelAnimationFrame(timerAnimFrame);
+      saveTimer();
+    }
+    function tickTimer() {
+      if (!timerRunning) return;
+      const total = timerElapsed + (Date.now() - timerStart);
+      const secs = Math.floor(total / 1000);
+      const h = String(Math.floor(secs / 3600)).padStart(2, '0');
+      const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
+      const s = String(secs % 60).padStart(2, '0');
+      document.getElementById('timer-display').textContent = `${h}:${m}:${s}`;
+      timerAnimFrame = requestAnimationFrame(tickTimer);
+    }
+    function saveTimer() {
+      localStorage.setItem('training_timer', JSON.stringify({
+        running: timerRunning, start: timerStart, elapsed: timerElapsed
+      }));
+    }
+
+    // ---- Refresh interval slider ----
+    document.addEventListener('DOMContentLoaded', () => {
+      const slider = document.getElementById('refresh-slider');
+      slider.addEventListener('input', () => {
+        const val = parseInt(slider.value);
+        document.getElementById('refresh-val').textContent = val;
+        refreshInterval = val * 1000;
+        clearInterval(refreshTimer);
+        refreshTimer = setInterval(refresh, refreshInterval);
+      });
+    });
+
+    // ---- Helpers ----
+    function formatBytes(value) {
+      const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+      let size = Math.max(0, value);
+      let idx = 0;
+      while (size >= 1024 && idx < units.length - 1) { size /= 1024; idx++; }
+      return `${size.toFixed(1)} ${units[idx]}`;
+    }
+    function formatDuration(seconds) {
+      const total = Math.max(0, Math.floor(seconds));
+      const d = Math.floor(total / 86400), h = Math.floor((total % 86400) / 3600);
+      const m = Math.floor((total % 3600) / 60), s = total % 60;
+      if (d > 0) return `${d}d ${h}h ${m}m`;
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+    function pushHistory(target, value) {
+      target.push(value);
+      if (target.length > historyLimit) target.shift();
+    }
+
+    // ---- Chart rendering ----
+    function renderChart(svgId, datasets) {
+      const svg = document.getElementById(svgId);
+      if (!svg) return;
+      const width = 600, height = 120;
+      let html = '';
+      datasets.forEach(({values, color, fillColor}, di) => {
+        if (!values.length) return;
+        const max = Math.max(100, ...values, 1);
+        const stepX = values.length > 1 ? width / (values.length - 1) : width;
+        const points = values.map((v, i) => {
+          const x = i * stepX;
+          const y = height - ((v / max) * (height - 20)) - 10;
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+        const gradId = `${svgId}-grad-${di}`;
+        html += `<defs><linearGradient id="${gradId}" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="${fillColor}" stop-opacity="0.7"/>
+          <stop offset="100%" stop-color="${fillColor}" stop-opacity="0.05"/>
+        </linearGradient></defs>`;
+        html += `<polygon class="chart-area" points="${points} ${width},${height} 0,${height}" fill="url(#${gradId})"></polygon>`;
+        html += `<polyline class="chart-line" points="${points}" stroke="${color}"></polyline>`;
+      });
+      svg.innerHTML = html;
+    }
+
+    // ---- Heatmap ----
+    function renderHeatmap(containerId, coreData) {
+      const el = document.getElementById(containerId);
+      if (!coreData) { el.innerHTML = ''; return; }
+      const entries = Object.entries(coreData).sort((a, b) =>
+        parseInt(a[0].replace('cpu', '')) - parseInt(b[0].replace('cpu', ''))
+      );
+      document.getElementById('core-count').textContent = `${entries.length} cores`;
+      el.innerHTML = entries.map(([core, pct]) => {
+        const hue = 120 - (pct * 1.2);
+        const bg = `hsl(${Math.max(0, hue)}, 75%, ${35 + pct * 0.15}%)`;
+        return `<div class="heatmap-cell" style="background:${bg};" title="${core}: ${pct.toFixed(1)}%">${parseInt(core.replace('cpu',''))}</div>`;
+      }).join('');
+    }
+
+    // ---- Process table ----
+    function renderProcessTable(processes) {
+      const body = document.getElementById('process-body');
+      body.innerHTML = processes.map(p => `
+        <tr><td>${escapeHtml(p.pid)}</td><td>${escapeHtml(p.name)}</td><td>${Number(p.cpu).toFixed(1)}</td>
+        <td>${Number(p.mem).toFixed(1)}</td><td>${escapeHtml(p.rss)}</td><td>${escapeHtml(p.stat)}</td></tr>
+      `).join('');
+    }
+
+    // ---- GPU cards ----
+    function renderGpu(gpus) {
+      const box = document.getElementById('gpu-box');
+      if (!gpus.length) { box.innerHTML = '<div class="gpu-item">No NVIDIA GPU data found.</div>'; return; }
+      box.innerHTML = gpus.map(g => {
+        const temp = parseFloat(g.temperature);
+        const tempColor = temp > 85 ? 'var(--danger)' : temp > 70 ? 'var(--warn)' : 'var(--good)';
+        return `<div class="gpu-item">
+          <div style="font-weight:700; margin-bottom:4px;">${escapeHtml(g.name)} #${escapeHtml(g.index)}</div>
+          <div class="tiny">Core: ${escapeHtml(g.utilization)}% · Mem Util: ${escapeHtml(g.memory_utilization)}%</div>
+          <div class="tiny">VRAM: ${escapeHtml(g.memory_used)} / ${escapeHtml(g.memory_total)} MB</div>
+          <div class="tiny">Temp: <span style="color:${tempColor};font-weight:600;">${escapeHtml(g.temperature)}°C</span> · Fan: ${escapeHtml(g.fan_speed)}%</div>
+          <div class="tiny">Power: ${escapeHtml(g.power_draw)} / ${escapeHtml(g.power_limit)} W</div>
+          <div class="tiny">Clock: ${escapeHtml(g.clock_sm)} / ${escapeHtml(g.clock_sm_max)} MHz</div>
+        </div>`;
+      }).join('');
+    }
+
+    // ---- GPU processes ----
+    function renderGpuProcesses(procs) {
+      const box = document.getElementById('gpu-proc-box');
+      if (!procs.length) { box.innerHTML = '<div class="gpu-item" style="font-size:0.82rem;">No active GPU compute processes.</div>'; return; }
+      box.innerHTML = procs.map(p =>
+        `<div class="gpu-item"><span style="font-weight:600;">PID ${escapeHtml(p.pid)}</span> · ${escapeHtml(p.name)} · <span style="color:var(--accent);">${escapeHtml(p.gpu_mem_mb)} MB</span></div>`
+      ).join('');
+    }
+
+    // ---- Alert threshold settings ----
+    function toggleAlertSettings() {
+      const el = document.getElementById('alert-settings');
+      el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    }
+    function getThreshold(id, fallback) {
+      const el = document.getElementById(id);
+      return el ? parseFloat(el.value) || fallback : fallback;
+    }
+
+    // ---- Alert history ----
+    const alertHistory = [];
+    function logAlert(msg) {
+      const time = new Date().toLocaleTimeString();
+      alertHistory.unshift({ time, msg });
+      if (alertHistory.length > 50) alertHistory.pop();
+      const panel = document.getElementById('alert-history-panel');
+      const log = document.getElementById('alert-history-log');
+      if (alertHistory.length > 0) {
+        panel.style.display = 'block';
+        log.innerHTML = alertHistory.map(a => 
+          `<div style="padding:3px 0; border-bottom:1px solid rgba(148,163,184,0.08);">
+            <span style="color:var(--muted);">${escapeHtml(a.time)}</span> — 
+            <span style="color:var(--danger);">${escapeHtml(a.msg)}</span>
+          </div>`
+        ).join('');
+      }
+    }
+    function clearAlertHistory() {
+      alertHistory.length = 0;
+      document.getElementById('alert-history-log').innerHTML = '';
+      document.getElementById('alert-history-panel').style.display = 'none';
+    }
+
+    // ---- Threshold alerts ----
+    function checkAlerts(data) {
+      const alertsOn = document.getElementById('alert-toggle').value === 'on';
+      const statsCard = document.getElementById('stats-card');
+      const panelGpu = document.getElementById('panel-gpu');
+      const panelMem = document.getElementById('panel-mem');
+      const panelCpu = document.getElementById('panel-cpu');
+      const statusEl = document.getElementById('alert-status');
+      const prevAlertCount = (window._lastAlertCount || 0);
+      let alerts = [];
+
+      [statsCard, panelGpu, panelMem, panelCpu].forEach(el => el && el.classList.remove('alert-active'));
+
+      if (!alertsOn) { statusEl.textContent = ''; window._lastAlertCount = 0; return; }
+
+      if (data.memory.percent > getThreshold('thresh-mem', 90)) { alerts.push('⚠️ Memory > ' + getThreshold('thresh-mem', 90) + '%'); panelMem && panelMem.classList.add('alert-active'); }
+      if (data.cpu_percent > getThreshold('thresh-cpu', 95)) { alerts.push('⚠️ CPU > ' + getThreshold('thresh-cpu', 95) + '%'); panelCpu && panelCpu.classList.add('alert-active'); }
+      if (data.iowait_percent > getThreshold('thresh-iowait', 30)) { alerts.push('⚠️ IO-Wait > ' + getThreshold('thresh-iowait', 30) + '%'); }
+
+      const hasGpu = Array.isArray(data.gpu) && data.gpu.length > 0;
+      if (hasGpu) {
+        data.gpu.forEach(g => {
+          const t = parseFloat(g.temperature);
+          if (t > getThreshold('thresh-gpu-temp', 85)) { alerts.push(`🔥 GPU#${g.index} Temp ${t}°C`); panelGpu && panelGpu.classList.add('alert-active'); }
+        });
+      }
+
+      if (alerts.length > 0 && alerts.length !== prevAlertCount) {
+        alerts.forEach(a => logAlert(a));
+      }
+      window._lastAlertCount = alerts.length;
+
+      statusEl.textContent = alerts.length ? alerts.join(' | ') : '✅ All clear';
+      statusEl.style.color = alerts.length ? 'var(--danger)' : 'var(--good)';
+    }
+
+    // ---- Browser notifications ----
+    function checkNotifications(data) {
+      if (document.getElementById('notif-toggle').value !== 'on') return;
+      const hasGpu = Array.isArray(data.gpu) && data.gpu.length > 0;
+      if (!hasGpu) return;
+      const maxUtil = Math.max(...data.gpu.map(g => parseFloat(g.utilization) || 0));
+      const isActive = maxUtil > 5;
+
+      if (lastGpuWasActive === true && !isActive) {
+        if (Notification.permission === 'granted') {
+          new Notification('🏁 GPU Idle', { body: 'GPU utilization dropped to ~0%. Training may have finished or crashed.' });
+        }
+      }
+      lastGpuWasActive = isActive;
+    }
+
+    // Request notification permission on toggle
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('notif-toggle').addEventListener('change', function() {
+        if (this.value === 'on' && Notification.permission === 'default') {
+          Notification.requestPermission();
+        }
+      });
+    });
+
+    // ---- Main refresh ----
+    async function refresh() {
+      try {
+        const response = await fetch('/api/metrics');
+        const data = await response.json();
+
+        document.getElementById('host-pill').textContent = `Host: ${data.host} (${data.active_user})`;
+        document.getElementById('platform-pill').textContent = `Platform: ${data.platform}`;
+        document.getElementById('uptime-pill').textContent = `Uptime: ${formatDuration(data.uptime_seconds)}`;
+        document.getElementById('footer').textContent = `Updated at ${new Date(data.timestamp * 1000).toLocaleTimeString()}`;
+
+        if (data.zombies > 0) {
+          const zp = document.getElementById('zombie-pill');
+          zp.style.display = '';
+          zp.textContent = `🧟 Zombies: ${data.zombies}`;
+        } else {
+          document.getElementById('zombie-pill').style.display = 'none';
+        }
+
+        // Ring gauges
+        animateValue('cpu-value', data.cpu_percent, '%', 1);
+        animateValue('iowait-value', data.iowait_percent, '%', 1);
+        animateValue('mem-value', data.memory.percent, '%', 1);
+        animateValue('disk-value', data.disk.percent, '%', 1);
+        document.getElementById('net-value').textContent = `${formatBytes(data.network.rx_rate)}/s ↓ · ${formatBytes(data.network.tx_rate)}/s ↑`;
+
+        setRingGauge('cpu-ring', data.cpu_percent);
+        setRingGauge('mem-ring', data.memory.percent);
+        setRingGauge('disk-ring', data.disk.percent);
+
+        // GPU values
+        let gpuCoreUtil = 0, gpuMemUtil = 0, hasGpu = Array.isArray(data.gpu) && data.gpu.length > 0;
+        if (hasGpu) {
+          const cu = data.gpu.map(g => Number(g.utilization)).filter(Number.isFinite);
+          const mu = data.gpu.map(g => Number(g.memory_utilization)).filter(Number.isFinite);
+          if (cu.length) gpuCoreUtil = cu.reduce((a, b) => a + b, 0) / cu.length;
+          if (mu.length) gpuMemUtil = mu.reduce((a, b) => a + b, 0) / mu.length;
+        }
+        document.getElementById('gpu-core-value').textContent = hasGpu ? `${gpuCoreUtil.toFixed(1)}%` : 'N/A';
+        document.getElementById('gpu-mem-value').textContent = hasGpu ? `${gpuMemUtil.toFixed(1)}%` : 'N/A';
+        setRingGauge('gpu-core-ring', gpuCoreUtil);
+
+        // Health score (0-100): weighted average penalizing high usage
+        const cpuPenalty = Math.min(100, data.cpu_percent) * 0.3;
+        const memPenalty = Math.min(100, data.memory.percent) * 0.25;
+        const diskPenalty = Math.min(100, data.disk.percent) * 0.15;
+        const gpuPenalty = gpuCoreUtil * 0.15;
+        const iowaitPenalty = Math.min(100, data.iowait_percent) * 0.15;
+        const healthScore = Math.max(0, Math.round(100 - cpuPenalty - memPenalty - diskPenalty - gpuPenalty - iowaitPenalty));
+        document.getElementById('health-score').textContent = healthScore;
+        document.getElementById('health-fill').style.width = healthScore + '%';
+        const healthColor = healthScore > 70 ? 'var(--good)' : healthScore > 40 ? 'var(--warn)' : 'var(--danger)';
+        document.getElementById('health-value').style.background = 'none';
+        document.getElementById('health-value').style.webkitTextFillColor = healthColor;
+        document.getElementById('health-value').style.color = healthColor;
+
+        // Histories
+        pushHistory(cpuHistory, data.cpu_percent);
+        pushHistory(iowaitHistory, data.iowait_percent);
+        pushHistory(memHistory, data.memory.percent);
+        pushHistory(netHistory, Math.min(100, ((data.network.rx_rate + data.network.tx_rate) / (1024 * 1024)) * 10));
+        pushHistory(gpuUtilHistory, gpuCoreUtil);
+        pushHistory(gpuMemHistory, gpuMemUtil);
+        const gth = data.gpu_history;
+        pushHistory(gpuTempHistory, gth && gth.temp && gth.temp.length ? gth.temp[gth.temp.length-1] : 0);
+        pushHistory(gpuPowerHistory, gth && gth.power && gth.power.length ? gth.power[gth.power.length-1] : 0);
+        pushHistory(diskReadHistory, data.disk_io.read_rate);
+        pushHistory(diskWriteHistory, data.disk_io.write_rate);
+
+        // Charts
+        renderChart('cpu-chart', [
+          { values: cpuHistory, color: '#60a5fa', fillColor: '#60a5fa' },
+          { values: iowaitHistory, color: '#f97316', fillColor: '#f97316' },
+        ]);
+        renderChart('mem-chart', [{ values: memHistory, color: '#fbbf24', fillColor: '#fbbf24' }]);
+        renderChart('net-chart', [
+          { values: data.network.rx_history.map(v => Math.min(v / 1024, 1000)), color: '#4ade80', fillColor: '#4ade80' },
+          { values: data.network.tx_history.map(v => Math.min(v / 1024, 1000)), color: '#60a5fa', fillColor: '#60a5fa' },
+        ]);
+        renderChart('gpu-util-chart', [{ values: gpuUtilHistory, color: '#22d3ee', fillColor: '#22d3ee' }]);
+        renderChart('gpu-extra-chart', [
+          { values: gpuMemHistory, color: '#4ade80', fillColor: '#4ade80' },
+          { values: gpuTempHistory, color: '#f97316', fillColor: '#f97316' },
+          { values: gpuPowerHistory, color: '#60a5fa', fillColor: '#60a5fa' },
+        ]);
+        renderChart('diskio-chart', [
+          { values: diskReadHistory.map(v => v / 1024), color: '#4ade80', fillColor: '#4ade80' },
+          { values: diskWriteHistory.map(v => v / 1024), color: '#60a5fa', fillColor: '#60a5fa' },
+        ]);
+        document.getElementById('diskio-rates').textContent =
+          `R: ${formatBytes(data.disk_io.read_rate)}/s · W: ${formatBytes(data.disk_io.write_rate)}/s`;
+
+        // Heatmap
+        renderHeatmap('cpu-heatmap', data.cpu_cores);
+
+        // Memory details
+        const m = data.memory;
+        document.getElementById('mem-details').innerHTML = `
+          <div>Used: ${formatBytes(m.used)} / ${formatBytes(m.total)}</div>
+          <div>Swap: ${formatBytes(m.swap_used)} / ${formatBytes(m.swap_total)} (${m.swap_percent.toFixed(1)}%)</div>
+          <div>Cached: ${formatBytes(m.cached)}</div>
+          <div>Buffers: ${formatBytes(m.buffers)}</div>
+          <div>Slab: ${formatBytes(m.slab)}</div>
+        `;
+
+        // System info box
+        const temps = (data.cpu_temps || []).map(t => `${escapeHtml(t.type)}: <span style="font-weight:600;color:${t.temp_c > 80 ? 'var(--danger)' : t.temp_c > 60 ? 'var(--warn)' : 'var(--good)'};"> ${t.temp_c}°C</span>`).join('<br>');
+        document.getElementById('sysinfo-box').innerHTML = `
+          <div class="gpu-item"><div class="label">Load Average</div>
+            1m: ${data.load_average['1m'].toFixed(2)} · 5m: ${data.load_average['5m'].toFixed(2)} · 15m: ${data.load_average['15m'].toFixed(2)}</div>
+          <div class="gpu-item"><div class="label">Disk</div>
+            ${escapeHtml(data.disk.path)}<br>Used: ${formatBytes(data.disk.used)} / ${formatBytes(data.disk.total)}<br>Free: ${formatBytes(data.disk.free)}</div>
+          <div class="gpu-item"><div class="label">Temperatures</div>${temps || 'No thermal data'}</div>
+          <div class="gpu-item"><div class="label">Scheduler</div>
+            Running: ${data.procs_running} · Blocked: ${data.procs_blocked}<br>
+            Ctx switches: ${Math.round(data.ctxt_rate)}/s</div>
+        `;
+
+        renderProcessTable(data.processes);
+        renderGpu(data.gpu);
+        renderGpuProcesses(data.gpu_processes || []);
+        checkAlerts(data);
+        checkNotifications(data);
+      } catch (err) {
+        console.error('Refresh error:', err);
+      }
+    }
+
+    // ---- Chart tooltip ----
+    const chartTooltip = {
+      el: null,
+      init() {
+        this.el = document.getElementById('chart-tooltip');
+        document.querySelectorAll('.chart').forEach(svg => {
+          svg.addEventListener('mousemove', (e) => this.show(e, svg));
+          svg.addEventListener('mouseleave', () => this.hide());
+        });
+      },
+      show(e, svg) {
+        const rect = svg.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const pct = x / rect.width;
+        const chartId = svg.id;
+        let text = '';
+        if (chartId === 'cpu-chart' && cpuHistory.length) {
+          const idx = Math.min(Math.floor(pct * cpuHistory.length), cpuHistory.length - 1);
+          text = `CPU: ${cpuHistory[idx].toFixed(1)}%`;
+          if (iowaitHistory[idx] !== undefined) text += ` · IO: ${iowaitHistory[idx].toFixed(1)}%`;
+        } else if (chartId === 'mem-chart' && memHistory.length) {
+          const idx = Math.min(Math.floor(pct * memHistory.length), memHistory.length - 1);
+          text = `Mem: ${memHistory[idx].toFixed(1)}%`;
+        } else if (chartId === 'gpu-util-chart' && gpuUtilHistory.length) {
+          const idx = Math.min(Math.floor(pct * gpuUtilHistory.length), gpuUtilHistory.length - 1);
+          text = `GPU: ${gpuUtilHistory[idx].toFixed(1)}%`;
+        }
+        if (!text) return;
+        this.el.textContent = text;
+        this.el.style.left = (e.clientX + 12) + 'px';
+        this.el.style.top = (e.clientY - 30) + 'px';
+        this.el.classList.add('visible');
+      },
+      hide() {
+        this.el.classList.remove('visible');
+      }
+    };
+    document.addEventListener('DOMContentLoaded', () => chartTooltip.init());
+
+    refresh();
+    refreshTimer = setInterval(refresh, refreshInterval);
+  </script>
+</body>
+</html>
