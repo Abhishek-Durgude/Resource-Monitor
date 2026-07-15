@@ -162,6 +162,12 @@
     }
     .export-btn:hover { background: rgba(96, 165, 250, 0.3); }
 
+    /* --- Ring Gauges --- */
+    .gauge-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; text-align: center; }
+    .gauge-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .gauge-ring { width: 90px; height: 90px; transform: rotate(-90deg); }
+    .gauge-bg { fill: none; stroke: rgba(148, 163, 184, 0.15); stroke-width: 10; }
+
     .gauge-fill { fill: none; stroke-width: 10; stroke-linecap: round; stroke-dasharray: 326.73; stroke-dashoffset: 326.73; transition: stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
     .gauge-label { font-size: 0.75rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
     .gauge-value { font-size: 1.1rem; font-weight: 800; font-variant-numeric: tabular-nums; }

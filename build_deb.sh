@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-VERSION="1.1-1"
+VERSION="1.1-2"
 PKG_NAME="resource-dashboard"
 ARCH="all"
 BUILD_DIR="${PKG_NAME}_${VERSION}_${ARCH}"
