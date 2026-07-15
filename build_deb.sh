@@ -34,6 +34,7 @@ EOF
 # 3. Copy application files
 cp resource_dashboard.py "$BUILD_DIR/usr/share/$PKG_NAME/"
 cp resource_dashboard_app.py "$BUILD_DIR/usr/share/$PKG_NAME/"
+cp dashboard.html "$BUILD_DIR/usr/share/$PKG_NAME/"
 chmod +x "$BUILD_DIR/usr/share/$PKG_NAME/resource_dashboard_app.py"
 
 # 4. Copy icon
