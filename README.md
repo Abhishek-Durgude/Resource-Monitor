@@ -24,12 +24,15 @@ A native Linux desktop application and standalone HTTP server for live system re
 
 ## ✨ Features
 
-- **GPU Telemetry:** Tracks GPU core/memory utilization, temperatures, power draw, and fan speed (via `nvidia-smi`).
-- **CPU & Memory:** Per-core CPU heatmap, IO-wait tracking, and detailed memory stats (swap, cached, buffers).
+- **Gorgeous Glassmorphism UI:** Features animated ring gauges, smooth number transitions, and a dark/light theme toggle.
+- **Robust Architecture:** Backend Python server with proper logging, dynamic configuration (`config.ini`), and a decoupled HTML template.
+- **Security First:** Includes Basic Authentication support, XSS vulnerability fixes, and strict CORS headers.
+- **GPU Telemetry:** Tracks GPU core/memory utilization, temperatures, power draw, and fan speed (via `nvidia-smi`) with optimized caching.
+- **CPU & Memory:** Per-core CPU heatmap, IO-wait tracking, detailed memory stats, and an overall System Health score.
 - **Disk & Network:** Disk I/O read/write rates and network rx/tx throughput.
-- **Alerts & Notifications:** Threshold alerts for high temperature or utilization, plus desktop notifications when the GPU drops to idle (useful to know when training finishes).
-- **Export & History:** Download historical metrics as a CSV file.
-- **Native Desktop App:** GTK3 + WebKit2 wrapper offering a system tray icon, keyboard shortcuts, always-on-top pinning, and fullscreen mode.
+- **Alerts & Notifications:** Custom threshold UI for alerts, historical alert log, and desktop notifications when the GPU drops to idle.
+- **Export & History:** Download historical metrics as a CSV file, and view metric tooltips on chart hover.
+- **Native Desktop App:** GTK3 + WebKit2 wrapper offering window state persistence, minimize-to-tray, system tray icon, keyboard shortcuts, always-on-top pinning, and fullscreen mode.
 
 ## 🛠 Prerequisites
 
@@ -40,10 +43,10 @@ To get full functionality (especially the GPU telemetry), your system should hav
 
 ### Method 1: Using the `.deb` Package (Recommended for Debian/Ubuntu)
 
-1. **[Download the latest `.deb` package](https://github.com/Abhishek-Durgude/Resource-Monitor/raw/main/resource-dashboard_1.0-1_all.deb)** from this repository.
+1. **[Download the latest `.deb` package](https://github.com/Abhishek-Durgude/Resource-Monitor/raw/main/resource-dashboard_1.1-1_all.deb)** from this repository.
 2. Install it using `apt` (this automatically handles required dependencies):
    ```bash
-   sudo apt install ./resource-dashboard_1.0-1_all.deb
+   sudo apt install ./resource-dashboard_1.1-1_all.deb
    ```
 3. You can now launch it from your application menu or terminal!
 
