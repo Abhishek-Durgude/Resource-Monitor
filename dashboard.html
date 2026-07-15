@@ -809,9 +809,9 @@
         document.getElementById('health-score').textContent = healthScore;
         document.getElementById('health-fill').style.width = healthScore + '%';
         const healthColor = healthScore > 70 ? 'var(--good)' : healthScore > 40 ? 'var(--warn)' : 'var(--danger)';
-        document.getElementById('health-value').style.background = 'none';
-        document.getElementById('health-value').style.webkitTextFillColor = healthColor;
-        document.getElementById('health-value').style.color = healthColor;
+        document.getElementById('health-score').style.background = 'none';
+        document.getElementById('health-score').style.webkitTextFillColor = healthColor;
+        document.getElementById('health-score').style.color = healthColor;
 
         // Histories
         pushHistory(cpuHistory, data.cpu_percent);
