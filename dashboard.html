@@ -99,6 +99,7 @@
     .span-5 { grid-column: span 5; }
     .span-6 { grid-column: span 6; }
     .span-8 { grid-column: span 8; }
+    .span-9 { grid-column: span 9; }
     .span-12 { grid-column: span 12; }
     .panel h2 { margin: 0 0 10px; font-size: 1rem; letter-spacing: 0.02em; font-weight: 700; }
     .chart { width: 100%; height: 120px; }
@@ -208,7 +209,7 @@
 
     @media (max-width: 1100px) {
       .hero, .grid-two { grid-template-columns: 1fr; }
-      .span-3, .span-4, .span-6, .span-8 { grid-column: span 12; }
+      .span-3, .span-4, .span-6, .span-8, .span-9 { grid-column: span 12; }
       .gauge-grid { grid-template-columns: repeat(2, 1fr); }
     }
 
@@ -352,6 +353,62 @@
     .modal-chart-wrap { position: relative; }
     .modal-chart-wrap .chart { height: 280px; }
     .modal-empty-state { text-align: center; color: var(--muted); padding: 40px 0; font-size: 0.9rem; }
+    .modal-custom-range { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+    .modal-custom-range input[type="datetime-local"] {
+      background: rgba(148,163,184,0.12); border: 1px solid var(--panel-border);
+      color: var(--text); border-radius: 8px; padding: 5px 8px; font-size: 0.82rem;
+      color-scheme: inherit;
+    }
+
+    /* --- Chart threshold / annotation SVG helpers --- */
+    .chart-threshold-line { stroke-dasharray: 5 4; stroke-width: 1.5; opacity: 0.75; }
+    .chart-threshold-label { font-size: 8px; font-weight: 700; opacity: 0.85; }
+    .chart-annotation-line { stroke-width: 1.5; opacity: 0.8; }
+    .chart-annotation-label { font-size: 8px; font-weight: 700; }
+
+    /* --- Toast notifications --- */
+    .toast-stack {
+      position: fixed; bottom: 20px; right: 20px; z-index: 1200;
+      display: flex; flex-direction: column; gap: 10px; max-width: 340px;
+    }
+    .toast {
+      background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px;
+      padding: 12px 14px; box-shadow: 0 12px 30px rgba(0,0,0,0.35); backdrop-filter: blur(12px);
+      color: var(--text); font-size: 0.85rem; display: flex; gap: 10px; align-items: flex-start;
+      animation: toast-in 0.2s ease;
+    }
+    .toast.success { border-left: 3px solid var(--good); }
+    .toast.error { border-left: 3px solid var(--danger); }
+    .toast.info { border-left: 3px solid var(--accent-2); }
+    .toast .toast-icon { flex-shrink: 0; }
+    .toast .toast-close { margin-left: auto; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.85rem; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .toast.leaving { animation: toast-out 0.18s ease forwards; }
+    @keyframes toast-out { to { opacity: 0; transform: translateX(20px); } }
+
+    /* --- In-app confirm dialog (reuses modal-overlay) --- */
+    .confirm-box { max-width: 380px; }
+    .confirm-box p { margin: 0 0 16px; color: var(--text); font-size: 0.9rem; line-height: 1.5; }
+    .confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
+    .confirm-btn {
+      padding: 7px 16px; border-radius: 10px; border: 1px solid var(--panel-border);
+      background: rgba(148,163,184,0.1); color: var(--text); cursor: pointer; font-size: 0.85rem; font-weight: 600;
+    }
+    .confirm-btn.danger { background: rgba(251, 113, 133, 0.15); border-color: rgba(251, 113, 133, 0.4); color: var(--danger); }
+    .confirm-btn.danger:hover { background: rgba(251, 113, 133, 0.3); }
+    .confirm-btn:hover { background: rgba(148,163,184,0.2); }
+
+    /* --- Compact density mode --- */
+    [data-density="compact"] .panel { padding: 10px; }
+    [data-density="compact"] .grid { gap: 8px; margin-bottom: 8px; }
+    [data-density="compact"] .hero { gap: 8px; margin-bottom: 8px; }
+    [data-density="compact"] .title-card { padding: 14px; }
+    [data-density="compact"] .stats-card { padding: 10px 14px; }
+    [data-density="compact"] .chart { height: 80px; }
+    [data-density="compact"] .gauge-ring { width: 66px; height: 66px; }
+    [data-density="compact"] .health-value { font-size: 1.5rem; }
+    [data-density="compact"] .toolbar { margin-bottom: 8px; padding: 6px 12px; }
+    [data-density="compact"] .heatmap-cell { width: 22px; height: 22px; font-size: 0.58rem; }
   </style>
 </head>
 <body>
@@ -389,6 +446,7 @@
           <span class="dot2"></span><span id="webhook-badge-text">Webhook: unknown</span>
         </span>
         <button class="export-btn" id="history-btn" onclick="openHistoryModal()">📈 History</button>
+        <button class="export-btn" id="density-toggle" onclick="toggleDensity()" title="Toggle compact layout">📐 Compact</button>
         <button class="export-btn" id="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
         <a class="export-btn" href="/api/export_csv" download="resource_metrics.csv">📥 Export CSV</a>
         <button class="export-btn session-export" id="session-export-btn" onclick="exportSessionCsv()" disabled title="Start the training timer to enable">📥 Export Since Timer Start</button>
@@ -499,7 +557,7 @@
     </div>
 
     <!-- Row 2: GPU Util Trend, GPU Mem / Temp / Power Trend -->
-    <div class="grid">
+    <div class="grid" id="gpu-trend-row">
       <div class="panel span-12">
         <div class="gpu-tabs" id="gpu-tabs" role="tablist" aria-label="Select GPU to display"></div>
       </div>
@@ -603,7 +661,13 @@
             <option value="disk_read_rate|disk_write_rate">Disk I/O (read/write)</option>
             <option value="net_rx_rate|net_tx_rate">Network (rx/tx)</option>
           </select>
+        </div>
+        <div class="modal-custom-range">
+          <label class="tiny">From <input type="datetime-local" id="history-from" /></label>
+          <label class="tiny">To <input type="datetime-local" id="history-to" /></label>
+          <button class="range-btn" id="history-custom-apply">Apply custom range</button>
           <a class="export-btn" id="history-export-btn" href="#" style="margin-left:auto;">📥 Export This Range</a>
+          <button class="export-btn" id="history-png-btn" onclick="exportHistoryChartPng()">🖼️ Save as Image</button>
         </div>
         <div class="modal-chart-wrap">
           <svg class="chart" id="history-chart" viewBox="0 0 900 280" preserveAspectRatio="none"></svg>
@@ -611,6 +675,23 @@
         </div>
       </div>
     </div>
+
+    <!-- Kill-process confirm dialog -->
+    <div class="modal-overlay" id="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+      <div class="modal-box confirm-box">
+        <div class="modal-header">
+          <h2 id="confirm-modal-title">Confirm</h2>
+          <button class="modal-close-btn" onclick="closeConfirmDialog(false)" aria-label="Cancel">✕</button>
+        </div>
+        <p id="confirm-modal-text"></p>
+        <div class="confirm-actions">
+          <button class="confirm-btn" onclick="closeConfirmDialog(false)">Cancel</button>
+          <button class="confirm-btn danger" id="confirm-modal-ok" onclick="closeConfirmDialog(true)">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
   </div>
 
   <script>
@@ -661,6 +742,62 @@
         });
       }
     })();
+
+    // ---- Compact density toggle ----
+    function toggleDensity() {
+      const html = document.documentElement;
+      const isCompact = html.getAttribute('data-density') === 'compact';
+      html.setAttribute('data-density', isCompact ? 'normal' : 'compact');
+      localStorage.setItem('dashboard_density', isCompact ? 'normal' : 'compact');
+      document.getElementById('density-toggle').textContent = isCompact ? '📐 Compact' : '📐 Normal';
+    }
+    (function() {
+      const saved = localStorage.getItem('dashboard_density');
+      if (saved === 'compact') {
+        document.documentElement.setAttribute('data-density', 'compact');
+        document.addEventListener('DOMContentLoaded', () => {
+          document.getElementById('density-toggle').textContent = '📐 Normal';
+        });
+      }
+    })();
+
+    // ---- Toast notifications ----
+    function showToast(message, type) {
+      const stack = document.getElementById('toast-stack');
+      if (!stack) return;
+      const icons = { success: '✅', error: '⚠️', info: 'ℹ️' };
+      const el = document.createElement('div');
+      el.className = `toast ${type || 'info'}`;
+      el.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span><span>${escapeHtml(message)}</span><button class="toast-close" aria-label="Dismiss">✕</button>`;
+      const remove = () => {
+        el.classList.add('leaving');
+        setTimeout(() => el.remove(), 200);
+      };
+      el.querySelector('.toast-close').addEventListener('click', remove);
+      stack.appendChild(el);
+      setTimeout(remove, 5000);
+    }
+
+    // ---- In-app confirm dialog (Promise-based, replaces native confirm()) ----
+    let _confirmResolve = null;
+    function showConfirmDialog(message, { okLabel } = {}) {
+      const modal = document.getElementById('confirm-modal');
+      document.getElementById('confirm-modal-text').textContent = message;
+      const okBtn = document.getElementById('confirm-modal-ok');
+      okBtn.textContent = okLabel || 'Confirm';
+      modal.classList.add('visible');
+      okBtn.focus();
+      return new Promise((resolve) => { _confirmResolve = resolve; });
+    }
+    function closeConfirmDialog(result) {
+      document.getElementById('confirm-modal').classList.remove('visible');
+      if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('confirm-modal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'confirm-modal') closeConfirmDialog(false);
+      });
+    });
 
     // ---- Ring gauge helper ----
     function setRingGauge(id, percent) {
@@ -728,6 +865,9 @@
     const diskReadHistory = [];
     const diskWriteHistory = [];
     const iowaitHistory = [];
+    const sampleTimestamps = []; // parallel to the history arrays above; used to place chart annotations
+    const runAnnotations = []; // { timestamp, label, color } markers for training-run start/pause
+    let lastGpuVisibility = null;
     let refreshInterval = 2000;
     let refreshTimer = null;
     let lastGpuWasActive = null;
@@ -829,6 +969,10 @@
       a.remove();
     }
 
+    function pushRunAnnotation(label, color) {
+      runAnnotations.push({ timestamp: Date.now() / 1000, label, color });
+      if (runAnnotations.length > 20) runAnnotations.shift();
+    }
     function toggleTimer() {
       if (timerRunning) {
         timerElapsed += (Date.now() - timerStart);
@@ -836,6 +980,7 @@
         timerStart = null;
         document.getElementById('timer-toggle').textContent = '▶ Resume';
         cancelAnimationFrame(timerAnimFrame);
+        pushRunAnnotation('Paused', chartColor('orange'));
       } else {
         if (timerElapsed === 0) {
           sessionStartEpoch = Date.now() / 1000;
@@ -844,6 +989,7 @@
         timerStart = Date.now();
         document.getElementById('timer-toggle').textContent = '⏸ Pause';
         tickTimer();
+        pushRunAnnotation('Started', chartColor('green'));
       }
       saveTimer();
       updateSessionExportButton();
@@ -910,20 +1056,26 @@
     }
 
     // ---- Chart rendering ----
-    function renderChart(svgId, datasets) {
+    function cssVar(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+    function renderChart(svgId, datasets, options) {
       const svg = document.getElementById(svgId);
       if (!svg) return;
-      const width = 600, height = 120;
+      const opts = options || {};
+      const vb = svg.viewBox && svg.viewBox.baseVal;
+      const width = (vb && vb.width) || 600;
+      const height = (vb && vb.height) || 120;
+      const allValues = datasets.flatMap(d => d.values);
+      const thresholdValues = (opts.thresholds || []).map(t => t.value);
+      const max = Math.max(100, ...allValues, ...thresholdValues, 1);
+      const valueToY = (v) => height - ((v / max) * (height - 20)) - 10;
       let html = '';
+
       datasets.forEach(({values, color, fillColor}, di) => {
         if (!values.length) return;
-        const max = Math.max(100, ...values, 1);
         const stepX = values.length > 1 ? width / (values.length - 1) : width;
-        const points = values.map((v, i) => {
-          const x = i * stepX;
-          const y = height - ((v / max) * (height - 20)) - 10;
-          return `${x.toFixed(1)},${y.toFixed(1)}`;
-        }).join(' ');
+        const points = values.map((v, i) => `${(i * stepX).toFixed(1)},${valueToY(v).toFixed(1)}`).join(' ');
         const gradId = `${svgId}-grad-${di}`;
         html += `<defs><linearGradient id="${gradId}" x1="0" x2="0" y1="0" y2="1">
           <stop offset="0%" stop-color="${fillColor}" stop-opacity="0.7"/>
@@ -932,6 +1084,26 @@
         html += `<polygon class="chart-area" points="${points} ${width},${height} 0,${height}" fill="url(#${gradId})"></polygon>`;
         html += `<polyline class="chart-line" points="${points}" stroke="${color}"></polyline>`;
       });
+
+      (opts.thresholds || []).forEach(t => {
+        const y = valueToY(t.value);
+        html += `<line class="chart-threshold-line" x1="0" y1="${y.toFixed(1)}" x2="${width}" y2="${y.toFixed(1)}" stroke="${t.color}"></line>`;
+        if (t.label) html += `<text class="chart-threshold-label" x="4" y="${(y - 3).toFixed(1)}" fill="${t.color}">${escapeHtml(t.label)}</text>`;
+      });
+
+      const ts = opts.timestamps;
+      if (ts && ts.length > 1 && opts.annotations && opts.annotations.length) {
+        const tMin = ts[0], tMax = ts[ts.length - 1], span = tMax - tMin;
+        if (span > 0) {
+          opts.annotations.forEach(a => {
+            if (a.timestamp < tMin || a.timestamp > tMax) return;
+            const x = ((a.timestamp - tMin) / span) * width;
+            html += `<line class="chart-annotation-line" x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${height}" stroke="${a.color}"></line>`;
+            html += `<text class="chart-annotation-label" x="${(x + 3).toFixed(1)}" y="10" fill="${a.color}">${escapeHtml(a.label)}</text>`;
+          });
+        }
+      }
+
       svg.innerHTML = html;
     }
 
@@ -995,7 +1167,8 @@
     }
 
     async function killProcess(pid, name, btn) {
-      if (!confirm(`Send SIGTERM to "${name}" (PID ${pid})?`)) return;
+      const confirmed = await showConfirmDialog(`Send SIGTERM to "${name}" (PID ${pid})?`, { okLabel: 'Kill process' });
+      if (!confirmed) return;
       btn.disabled = true;
       try {
         const res = await fetch('/api/kill_process', {
@@ -1004,10 +1177,14 @@
           body: JSON.stringify({ pid, signal: 'TERM' }),
         });
         const result = await res.json();
-        if (!result.success) alert(result.message || 'Failed to kill process.');
-        else refresh();
+        if (!result.success) {
+          showToast(result.message || 'Failed to kill process.', 'error');
+        } else {
+          showToast(result.message || `Killed PID ${pid}.`, 'success');
+          refresh();
+        }
       } catch (err) {
-        alert('Request failed: ' + err.message);
+        showToast('Request failed: ' + err.message, 'error');
       } finally {
         btn.disabled = false;
       }
@@ -1029,6 +1206,23 @@
         killProcess(btn.dataset.pid, btn.dataset.name, btn);
       });
     });
+
+    // ---- Collapse GPU panels entirely when no GPU is present ----
+    function updateGpuVisibility(hasGpu) {
+      if (hasGpu === lastGpuVisibility) return; // avoid redundant DOM churn every refresh
+      lastGpuVisibility = hasGpu;
+      const trendRow = document.getElementById('gpu-trend-row');
+      const cardsPanel = document.getElementById('panel-gpu');
+      if (trendRow) trendRow.style.display = hasGpu ? '' : 'none';
+      if (cardsPanel) cardsPanel.style.display = hasGpu ? '' : 'none';
+      // Reclaim the freed grid space for the process table, unless the user has
+      // manually expanded it to full width already.
+      const procPanel = document.getElementById('panel-processes');
+      if (procPanel && !procPanel.classList.contains('span-12')) {
+        procPanel.classList.toggle('span-9', !hasGpu);
+        procPanel.classList.toggle('span-5', hasGpu);
+      }
+    }
 
     // ---- GPU cards ----
     function renderGpu(gpus) {
@@ -1067,6 +1261,8 @@
       'net_rx_rate|net_tx_rate': { label: 'Network (rx/tx, KB/s)', colors: ['green', 'blue'] },
     };
     let historyRangeSeconds = 86400;
+    let historyCustomRange = null; // { since, until } in unix seconds, overrides historyRangeSeconds when set
+    let lastHistoryRows = [];
 
     function openHistoryModal(metricKey) {
       const select = document.getElementById('history-metric');
@@ -1080,8 +1276,13 @@
 
     async function loadHistoryData() {
       const metricKey = document.getElementById('history-metric').value;
-      const until = Date.now() / 1000;
-      const since = until - historyRangeSeconds;
+      let since, until;
+      if (historyCustomRange) {
+        ({ since, until } = historyCustomRange);
+      } else {
+        until = Date.now() / 1000;
+        since = until - historyRangeSeconds;
+      }
       const exportBtn = document.getElementById('history-export-btn');
       exportBtn.href = `/api/history?since=${since}&until=${until}&limit=20000&format=csv`;
 
@@ -1092,7 +1293,9 @@
         rows = json.rows || [];
       } catch (err) {
         console.error('History fetch failed:', err);
+        showToast('Failed to load history data.', 'error');
       }
+      lastHistoryRows = rows;
 
       const emptyEl = document.getElementById('history-empty');
       const svg = document.getElementById('history-chart');
@@ -1112,6 +1315,71 @@
       renderChart('history-chart', datasets);
     }
 
+    // ---- Export the currently-shown history chart as a PNG ----
+    function exportHistoryChartPng() {
+      const svg = document.getElementById('history-chart');
+      if (!svg || !lastHistoryRows.length) {
+        showToast('No chart data to export yet.', 'error');
+        return;
+      }
+      const metricKey = document.getElementById('history-metric').value;
+      const meta = METRIC_LABELS[metricKey];
+      const vb = svg.viewBox.baseVal;
+
+      // A serialized SVG loses the page's external stylesheet, so inline the
+      // handful of classes the chart actually uses before exporting it.
+      const clone = svg.cloneNode(true);
+      const styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+      styleEl.textContent = `
+        .chart-line { fill: none; stroke-width: 2; }
+        .chart-area { fill-opacity: 0.18; }
+        .chart-threshold-line { stroke-dasharray: 5 4; stroke-width: 1.5; opacity: 0.75; }
+        .chart-threshold-label, .chart-annotation-label { font-size: 8px; font-weight: 700; font-family: sans-serif; }
+        .chart-annotation-line { stroke-width: 1.5; opacity: 0.8; }
+      `;
+      clone.insertBefore(styleEl, clone.firstChild);
+      clone.setAttribute('width', vb.width);
+      clone.setAttribute('height', vb.height);
+
+      const padding = 40, headerHeight = 46, scale = 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = (vb.width + padding * 2) * scale;
+      canvas.height = (vb.height + padding * 2 + headerHeight) * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(scale, scale);
+
+      const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+      ctx.fillStyle = isLight ? '#f0f4f8' : '#0b1020';
+      ctx.fillRect(0, 0, canvas.width / scale, canvas.height / scale);
+      ctx.fillStyle = isLight ? '#1e293b' : '#e5eefc';
+      ctx.font = '600 16px sans-serif';
+      ctx.fillText(`${meta.label} — Resource Dashboard`, padding, 24);
+      ctx.font = '400 11px sans-serif';
+      ctx.fillStyle = isLight ? '#64748b' : '#92a2bf';
+      ctx.fillText(`Generated ${new Date().toLocaleString()}`, padding, 40);
+
+      const svgData = new XMLSerializer().serializeToString(clone);
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, padding, padding + headerHeight - 20, vb.width, vb.height);
+        URL.revokeObjectURL(url);
+        canvas.toBlob((blob) => {
+          if (!blob) { showToast('Failed to render chart image.', 'error'); return; }
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `resource_dashboard_${metricKey.replace(/\|/g, '_')}_${Date.now()}.png`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          showToast('Chart image saved.', 'success');
+        }, 'image/png');
+      };
+      img.onerror = () => showToast('Failed to render chart image.', 'error');
+      img.src = url;
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('history-metric')?.addEventListener('change', loadHistoryData);
       document.querySelectorAll('.range-btn').forEach(btn => {
@@ -1119,14 +1387,36 @@
           document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
           historyRangeSeconds = parseInt(btn.dataset.range, 10);
+          historyCustomRange = null;
+          document.getElementById('history-from').value = '';
+          document.getElementById('history-to').value = '';
           loadHistoryData();
         });
+      });
+      document.getElementById('history-custom-apply')?.addEventListener('click', () => {
+        const fromVal = document.getElementById('history-from').value;
+        const toVal = document.getElementById('history-to').value;
+        if (!fromVal || !toVal) {
+          showToast('Pick both a from and to date/time first.', 'error');
+          return;
+        }
+        const since = new Date(fromVal).getTime() / 1000;
+        const until = new Date(toVal).getTime() / 1000;
+        if (!(since < until)) {
+          showToast('"From" must be earlier than "To".', 'error');
+          return;
+        }
+        historyCustomRange = { since, until };
+        document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+        loadHistoryData();
       });
       document.getElementById('history-modal')?.addEventListener('click', (e) => {
         if (e.target.id === 'history-modal') closeHistoryModal();
       });
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeHistoryModal();
+        if (e.key !== 'Escape') return;
+        closeHistoryModal();
+        if (document.getElementById('confirm-modal')?.classList.contains('visible')) closeConfirmDialog(false);
       });
     });
 
@@ -1134,7 +1424,10 @@
     function toggleProcessPanelExpand() {
       const panel = document.getElementById('panel-processes');
       const expanded = panel.classList.toggle('span-12');
-      panel.classList.toggle('span-5', !expanded);
+      // When collapsing, restore whichever width is currently correct (span-9 if
+      // the GPU panels are hidden and reclaimed this panel's space, else span-5).
+      panel.classList.toggle('span-9', !expanded && lastGpuVisibility === false);
+      panel.classList.toggle('span-5', !expanded && lastGpuVisibility !== false);
       document.getElementById('proc-expand-btn').textContent = expanded ? '⤡' : '⤢';
       localStorage.setItem('proc_panel_expanded', expanded ? '1' : '0');
     }
@@ -1352,6 +1645,7 @@
         document.getElementById('gpu-core-value').textContent = hasGpu ? `${gpuCoreUtil.toFixed(1)}%` : 'N/A';
         document.getElementById('gpu-mem-value').textContent = hasGpu ? `${gpuMemUtil.toFixed(1)}%` : 'N/A';
         setRingGauge('gpu-core-ring', gpuCoreUtil);
+        updateGpuVisibility(hasGpu);
 
         // Per-GPU history (for the GPU tab selector)
         renderGpuTabs(hasGpu ? data.gpu : []);
@@ -1396,13 +1690,26 @@
         pushHistory(gpuPowerHistory, gth && gth.power && gth.power.length ? gth.power[gth.power.length-1] : 0);
         pushHistory(diskReadHistory, data.disk_io.read_rate);
         pushHistory(diskWriteHistory, data.disk_io.write_rate);
+        pushHistory(sampleTimestamps, data.timestamp);
 
         // Charts
+        const dangerColor = cssVar('--danger');
         renderChart('cpu-chart', [
           { values: cpuHistory, color: chartColor('blue'), fillColor: chartColor('blue') },
           { values: iowaitHistory, color: chartColor('orange'), fillColor: chartColor('orange') },
-        ]);
-        renderChart('mem-chart', [{ values: memHistory, color: chartColor('yellow'), fillColor: chartColor('yellow') }]);
+        ], {
+          thresholds: [
+            { value: getThreshold('thresh-cpu', 95), color: dangerColor, label: 'CPU limit' },
+            { value: getThreshold('thresh-iowait', 30), color: chartColor('purple'), label: 'IO-wait limit' },
+          ],
+          timestamps: sampleTimestamps,
+          annotations: runAnnotations,
+        });
+        renderChart('mem-chart', [{ values: memHistory, color: chartColor('yellow'), fillColor: chartColor('yellow') }], {
+          thresholds: [{ value: getThreshold('thresh-mem', 90), color: dangerColor, label: 'Mem limit' }],
+          timestamps: sampleTimestamps,
+          annotations: runAnnotations,
+        });
         renderChart('net-chart', [
           { values: data.network.rx_history.map(v => Math.min(v / 1024, 1000)), color: chartColor('green'), fillColor: chartColor('green') },
           { values: data.network.tx_history.map(v => Math.min(v / 1024, 1000)), color: chartColor('blue'), fillColor: chartColor('blue') },
@@ -1412,12 +1719,17 @@
           const gpuExtra = selectedGpuTab === 'avg'
             ? { mem: gpuMemHistory, temp: gpuTempHistory, power: gpuPowerHistory }
             : ensureGpuHistory(selectedGpuTab);
-          renderChart('gpu-util-chart', [{ values: gpuUtilView, color: chartColor('cyan'), fillColor: chartColor('cyan') }]);
+          renderChart('gpu-util-chart', [{ values: gpuUtilView, color: chartColor('cyan'), fillColor: chartColor('cyan') }], {
+            timestamps: sampleTimestamps,
+            annotations: runAnnotations,
+          });
           renderChart('gpu-extra-chart', [
             { values: gpuExtra.mem, color: chartColor('green'), fillColor: chartColor('green') },
             { values: gpuExtra.temp, color: chartColor('orange'), fillColor: chartColor('orange') },
             { values: gpuExtra.power, color: chartColor('blue'), fillColor: chartColor('blue') },
-          ]);
+          ], {
+            thresholds: [{ value: getThreshold('thresh-gpu-temp', 85), color: dangerColor, label: 'GPU temp limit' }],
+          });
         }
         renderChart('diskio-chart', [
           { values: diskReadHistory.map(v => v / 1024), color: chartColor('green'), fillColor: chartColor('green') },

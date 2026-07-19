@@ -30,13 +30,14 @@ A native Linux desktop application and standalone HTTP server for live system re
 - **GPU Telemetry:** Tracks GPU core/memory utilization, temperatures, power draw, and fan speed (via `nvidia-smi`) with optimized caching, plus per-GPU trend tabs on multi-GPU systems.
 - **CPU & Memory:** Per-core CPU heatmap, IO-wait tracking, detailed memory stats, and an overall System Health score (hover the score for a per-metric breakdown).
 - **Disk & Network:** Disk I/O read/write rates and network rx/tx throughput.
-- **Process Management:** Sortable, filterable top-processes table with a one-click kill button (guarded against killing the dashboard itself or system-critical PIDs), and per-process GPU memory usage merged in when a process is running compute on the GPU.
-- **Alerts & Notifications:** Custom threshold UI for alerts (persisted across reloads), historical alert log, desktop notifications when the GPU drops to idle, and an optional server-side webhook so alerts reach you even with the tab closed.
-- **Export & History:** Download historical metrics as a CSV file, export just the current training-timer session, view metric tooltips on chart hover, and browse long-term history (up to 30 days) in-app via the **📈 History** modal — pick a metric and a time range (1h/6h/24h/7d/30d) and export that exact range as CSV.
+- **Process Management:** Sortable, filterable top-processes table with a one-click kill button — guarded against killing the dashboard itself or system-critical PIDs, confirmed via an in-app dialog (not a native browser popup), and per-process GPU memory usage merged in when a process is running compute on the GPU.
+- **Alerts & Notifications:** Custom threshold UI for alerts (persisted across reloads), historical alert log, desktop notifications when the GPU drops to idle, an optional server-side webhook so alerts reach you even with the tab closed, and dashed threshold lines drawn directly on the CPU/Memory/GPU-temp/IO-wait trend charts so you can see how close you are without doing the math.
+- **Export & History:** Download historical metrics as a CSV file, export just the current training-timer session, view metric tooltips on chart hover, and browse long-term history (up to 30 days) in-app via the **📈 History** modal — pick a metric, a preset range (1h/6h/24h/7d/30d) or a custom from/to date range, export that exact range as CSV, or save the chart as a PNG image for reports.
+- **Training-Run Annotations:** Starting/pausing the training timer drops a labeled marker directly on the CPU and GPU trend charts, so you can visually correlate "when did I start this run" with what happened to resource usage.
 - **Monitoring Integrations:** A Prometheus-compatible `/metrics` endpoint for scraping into Grafana or any Prometheus-based stack, plus a toolbar badge showing whether the server-side alert webhook is active and when it last fired.
-- **Resilient UX:** Connection-lost banner with retry status and an initial loading state, so a dropped server connection is never silently stale.
+- **Resilient UX:** Connection-lost banner with retry status and an initial loading state, so a dropped server connection is never silently stale. GPU panels collapse entirely (and give the process table their space) on machines with no NVIDIA GPU instead of showing empty placeholders.
 - **Accessible:** ARIA labels on gauges/live regions and non-color-only cues for alert states.
-- **UI Polish:** Theme-aware chart colors (separate palettes tuned for dark/light contrast), an expand toggle to widen the Top Processes table to full width, GPU-active rows highlighted in the process table, and "⤢" expand icons on every trend chart that jump straight into the History modal for that metric.
+- **UI Polish:** Theme-aware chart colors (separate palettes tuned for dark/light contrast), a compact-density toggle for fitting more on screen, an expand toggle to widen the Top Processes table to full width, GPU-active rows highlighted in the process table, in-app toast notifications instead of browser alert popups, and "⤢" expand icons on every trend chart that jump straight into the History modal for that metric.
 - **Headless / Server Mode:** Runs with zero GUI dependencies; ships a systemd service template for running as a background service that survives logout/reboot.
 - **Native Desktop App:** GTK3 + WebKit2 wrapper offering window state persistence, minimize-to-tray, system tray icon, keyboard shortcuts, always-on-top pinning, and fullscreen mode.
 
@@ -49,10 +50,10 @@ To get full functionality (especially the GPU telemetry), your system should hav
 
 ### Method 1: Using the `.deb` Package (Recommended for Debian/Ubuntu)
 
-1. **[Download the latest `.deb` package](https://github.com/Abhishek-Durgude/Resource-Monitor/raw/main/resource-dashboard_1.2-3_all.deb)** from this repository.
+1. **[Download the latest `.deb` package](https://github.com/Abhishek-Durgude/Resource-Monitor/raw/main/resource-dashboard_1.3-1_all.deb)** from this repository.
 2. Install it using `apt` (this automatically handles required dependencies):
    ```bash
-   sudo apt install ./resource-dashboard_1.2-3_all.deb
+   sudo apt install ./resource-dashboard_1.3-1_all.deb
    ```
 3. You can now launch it from your application menu or terminal!
 
