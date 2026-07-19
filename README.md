@@ -27,11 +27,14 @@ A native Linux desktop application and standalone HTTP server for live system re
 - **Gorgeous Glassmorphism UI:** Features animated ring gauges, smooth number transitions, and a dark/light theme toggle.
 - **Robust Architecture:** Backend Python server with proper logging, dynamic configuration (`config.ini`), and a decoupled HTML template.
 - **Security First:** Includes Basic Authentication support, XSS vulnerability fixes, and strict CORS headers.
-- **GPU Telemetry:** Tracks GPU core/memory utilization, temperatures, power draw, and fan speed (via `nvidia-smi`) with optimized caching.
-- **CPU & Memory:** Per-core CPU heatmap, IO-wait tracking, detailed memory stats, and an overall System Health score.
+- **GPU Telemetry:** Tracks GPU core/memory utilization, temperatures, power draw, and fan speed (via `nvidia-smi`) with optimized caching, plus per-GPU trend tabs on multi-GPU systems.
+- **CPU & Memory:** Per-core CPU heatmap, IO-wait tracking, detailed memory stats, and an overall System Health score (hover the score for a per-metric breakdown).
 - **Disk & Network:** Disk I/O read/write rates and network rx/tx throughput.
-- **Alerts & Notifications:** Custom threshold UI for alerts, historical alert log, and desktop notifications when the GPU drops to idle.
-- **Export & History:** Download historical metrics as a CSV file, and view metric tooltips on chart hover.
+- **Process Management:** Sortable, filterable top-processes table with a one-click kill button (guarded against killing the dashboard itself or system-critical PIDs).
+- **Alerts & Notifications:** Custom threshold UI for alerts (persisted across reloads), historical alert log, and desktop notifications when the GPU drops to idle.
+- **Export & History:** Download historical metrics as a CSV file, export just the current training-timer session, and view metric tooltips on chart hover.
+- **Resilient UX:** Connection-lost banner with retry status and an initial loading state, so a dropped server connection is never silently stale.
+- **Accessible:** ARIA labels on gauges/live regions and non-color-only cues for alert states.
 - **Native Desktop App:** GTK3 + WebKit2 wrapper offering window state persistence, minimize-to-tray, system tray icon, keyboard shortcuts, always-on-top pinning, and fullscreen mode.
 
 ## 🛠 Prerequisites
@@ -94,3 +97,11 @@ If you installed via the `.deb` package, you can cleanly remove the dashboard wi
 ```bash
 sudo apt remove resource-dashboard
 ```
+
+## 🔒 Process Kill Safety
+
+The process table's kill button calls a local `/api/kill_process` endpoint. It refuses to signal PID 0/1 or the dashboard server's own process, but it otherwise sends the requested signal to any PID your user has permission to kill — use it deliberately. If you bind the dashboard beyond `127.0.0.1` (e.g. `--host 0.0.0.0`), always pair it with `--auth user:pass`.
+
+## 🙌 Credits
+
+Developed by **Clixzsera Lab** · Abhishek Durgude
