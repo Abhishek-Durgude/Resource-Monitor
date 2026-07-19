@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
 
 # AndroidApp (Expo/React Native)
 AndroidApp/node_modules/

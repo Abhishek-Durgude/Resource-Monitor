@@ -18,13 +18,17 @@ import io
 import json
 import os
 import platform
+import queue
 import re
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,6 +41,20 @@ import webbrowser
 DEFAULT_SAMPLE_WINDOW = 120
 DEFAULT_TOP_PROCESSES = 8
 DEFAULT_PORT = 8765
+HISTORY_RETENTION_DAYS = 30
+
+DEFAULT_ALERT_THRESHOLDS = {
+    "cpu_percent": 95.0,
+    "mem_percent": 90.0,
+    "gpu_temp_c": 85.0,
+    "iowait_percent": 30.0,
+}
+# Populated from config.ini [Alerts] in main(); read by evaluate_alerts().
+ALERT_CONFIG: Dict[str, Any] = {
+    "webhook_url": None,
+    "cooldown_seconds": 900.0,
+    **DEFAULT_ALERT_THRESHOLDS,
+}
 
 
 def clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -439,10 +457,238 @@ class ResourceState:
     last_sample_time: Optional[float] = None
     # CSV logging
     csv_rows: List[Dict[str, Any]] = field(default_factory=list)
+    # Alert de-duplication: alert key -> last-sent timestamp
+    alert_state: Dict[str, float] = field(default_factory=dict)
 
 
 STATE = ResourceState()
 STATE_LOCK = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# Long-term history (SQLite)
+# ---------------------------------------------------------------------------
+HISTORY_DB_PATH = Path.home() / ".local" / "share" / "resource-dashboard" / "history.db"
+HISTORY_COLUMNS = [
+    "timestamp", "cpu_percent", "iowait_percent", "mem_percent", "mem_used_bytes",
+    "swap_percent", "gpu_util_avg", "gpu_mem_avg", "gpu_temp_max", "gpu_power_w",
+    "disk_read_rate", "disk_write_rate", "net_rx_rate", "net_tx_rate",
+]
+_history_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=1000)
+_history_writer_started = False
+
+
+def init_history_db() -> None:
+    """Create the history DB/table if needed and prune rows past the retention window."""
+    HISTORY_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(HISTORY_DB_PATH)
+    try:
+        cols_sql = ", ".join(f"{c} REAL" for c in HISTORY_COLUMNS)
+        conn.execute(f"CREATE TABLE IF NOT EXISTS metrics ({cols_sql})")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp)")
+        cutoff = time.time() - HISTORY_RETENTION_DAYS * 86400
+        conn.execute("DELETE FROM metrics WHERE timestamp < ?", (cutoff,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _history_writer_loop() -> None:
+    """Background thread: drain queued rows to SQLite so requests never block on disk I/O."""
+    conn = sqlite3.connect(HISTORY_DB_PATH)
+    placeholders = ", ".join("?" for _ in HISTORY_COLUMNS)
+    insert_sql = f"INSERT INTO metrics ({', '.join(HISTORY_COLUMNS)}) VALUES ({placeholders})"
+    last_prune = time.time()
+    try:
+        while True:
+            row = _history_queue.get()
+            if row is None:  # sentinel for shutdown
+                break
+            try:
+                conn.execute(insert_sql, [row.get(c) for c in HISTORY_COLUMNS])
+                conn.commit()
+            except sqlite3.Error as exc:
+                logging.warning(f"Failed to write history row: {exc}")
+            if time.time() - last_prune > 3600:
+                cutoff = time.time() - HISTORY_RETENTION_DAYS * 86400
+                conn.execute("DELETE FROM metrics WHERE timestamp < ?", (cutoff,))
+                conn.commit()
+                last_prune = time.time()
+    finally:
+        conn.close()
+
+
+def start_history_writer() -> None:
+    global _history_writer_started
+    if _history_writer_started:
+        return
+    init_history_db()
+    threading.Thread(target=_history_writer_loop, daemon=True).start()
+    _history_writer_started = True
+
+
+def record_history_row(row: Dict[str, Any]) -> None:
+    """Queue a metrics row for async persistence; drops silently if the queue is full."""
+    try:
+        _history_queue.put_nowait(row)
+    except queue.Full:
+        pass
+
+
+def query_history(since: Optional[float], until: Optional[float], limit: int) -> List[Dict[str, Any]]:
+    conn = sqlite3.connect(HISTORY_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        clauses = []
+        params: List[Any] = []
+        if since is not None:
+            clauses.append("timestamp >= ?")
+            params.append(since)
+        if until is not None:
+            clauses.append("timestamp <= ?")
+            params.append(until)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM metrics {where} ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+        rows.reverse()
+        return rows
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Threshold alerts (server-side, edge-triggered webhook delivery)
+# ---------------------------------------------------------------------------
+def evaluate_alerts(data: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Return a list of human-readable alert messages for metrics that exceed configured thresholds."""
+    cfg = config if config is not None else ALERT_CONFIG
+    alerts: List[str] = []
+
+    if data["memory"]["percent"] > cfg["mem_percent"]:
+        alerts.append(f"Memory > {cfg['mem_percent']}% (currently {data['memory']['percent']:.1f}%)")
+    if data["cpu_percent"] > cfg["cpu_percent"]:
+        alerts.append(f"CPU > {cfg['cpu_percent']}% (currently {data['cpu_percent']:.1f}%)")
+    if data["iowait_percent"] > cfg["iowait_percent"]:
+        alerts.append(f"IO-Wait > {cfg['iowait_percent']}% (currently {data['iowait_percent']:.1f}%)")
+    for g in data.get("gpu") or []:
+        try:
+            temp = float(g["temperature"])
+        except (TypeError, ValueError):
+            continue
+        if temp > cfg["gpu_temp_c"]:
+            alerts.append(f"GPU#{g['index']} temp {temp}°C > {cfg['gpu_temp_c']}°C")
+
+    return alerts
+
+
+def _send_webhook(url: str, payload: Dict[str, Any]) -> None:
+    try:
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+        )
+        urllib.request.urlopen(req, timeout=5).close()
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        logging.warning(f"Alert webhook delivery failed: {exc}")
+
+
+def maybe_fire_alert_webhook(data: Dict[str, Any]) -> None:
+    """Send a webhook for newly-active alerts, respecting a per-alert cooldown."""
+    webhook_url = ALERT_CONFIG.get("webhook_url")
+    if not webhook_url:
+        return
+
+    alerts = evaluate_alerts(data)
+    now = data["timestamp"]
+    cooldown = ALERT_CONFIG.get("cooldown_seconds", 900.0)
+
+    to_send: List[str] = []
+    with STATE_LOCK:
+        active_keys = set()
+        for msg in alerts:
+            key = msg.split("(")[0].strip()
+            active_keys.add(key)
+            last_sent = STATE.alert_state.get(key)
+            if last_sent is None or (now - last_sent) >= cooldown:
+                to_send.append(msg)
+                STATE.alert_state[key] = now
+        # Forget alerts that are no longer active so they re-fire promptly if they recur.
+        for key in list(STATE.alert_state.keys()):
+            if key not in active_keys:
+                STATE.alert_state.pop(key, None)
+
+    if to_send:
+        payload = {
+            "host": data["host"],
+            "timestamp": now,
+            "alerts": to_send,
+        }
+        threading.Thread(target=_send_webhook, args=(webhook_url, payload), daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# Prometheus text-format export
+# ---------------------------------------------------------------------------
+def render_prometheus(data: Dict[str, Any]) -> str:
+    lines = [
+        "# HELP resource_dashboard_cpu_percent Overall CPU utilization percent",
+        "# TYPE resource_dashboard_cpu_percent gauge",
+        f"resource_dashboard_cpu_percent {data['cpu_percent']}",
+        "# HELP resource_dashboard_iowait_percent CPU IO-wait percent",
+        "# TYPE resource_dashboard_iowait_percent gauge",
+        f"resource_dashboard_iowait_percent {data['iowait_percent']}",
+        "# HELP resource_dashboard_mem_percent Memory used percent",
+        "# TYPE resource_dashboard_mem_percent gauge",
+        f"resource_dashboard_mem_percent {data['memory']['percent']}",
+        "# HELP resource_dashboard_disk_percent Disk used percent",
+        "# TYPE resource_dashboard_disk_percent gauge",
+        f"resource_dashboard_disk_percent {data['disk']['percent']}",
+        "# HELP resource_dashboard_disk_read_bytes_per_second Disk read rate",
+        "# TYPE resource_dashboard_disk_read_bytes_per_second gauge",
+        f"resource_dashboard_disk_read_bytes_per_second {data['disk_io']['read_rate']}",
+        "# HELP resource_dashboard_disk_write_bytes_per_second Disk write rate",
+        "# TYPE resource_dashboard_disk_write_bytes_per_second gauge",
+        f"resource_dashboard_disk_write_bytes_per_second {data['disk_io']['write_rate']}",
+        "# HELP resource_dashboard_net_rx_bytes_per_second Network receive rate",
+        "# TYPE resource_dashboard_net_rx_bytes_per_second gauge",
+        f"resource_dashboard_net_rx_bytes_per_second {data['network']['rx_rate']}",
+        "# HELP resource_dashboard_net_tx_bytes_per_second Network transmit rate",
+        "# TYPE resource_dashboard_net_tx_bytes_per_second gauge",
+        f"resource_dashboard_net_tx_bytes_per_second {data['network']['tx_rate']}",
+        "# HELP resource_dashboard_zombies Number of zombie processes",
+        "# TYPE resource_dashboard_zombies gauge",
+        f"resource_dashboard_zombies {data['zombies']}",
+    ]
+
+    gpus = data.get("gpu") or []
+    if gpus:
+        lines += [
+            "# HELP resource_dashboard_gpu_utilization_percent GPU core utilization percent",
+            "# TYPE resource_dashboard_gpu_utilization_percent gauge",
+        ]
+        for g in gpus:
+            lines.append(
+                f'resource_dashboard_gpu_utilization_percent{{gpu="{g["index"]}"}} {g["utilization"]}'
+            )
+        lines += [
+            "# HELP resource_dashboard_gpu_temperature_celsius GPU temperature",
+            "# TYPE resource_dashboard_gpu_temperature_celsius gauge",
+        ]
+        for g in gpus:
+            lines.append(
+                f'resource_dashboard_gpu_temperature_celsius{{gpu="{g["index"]}"}} {g["temperature"]}'
+            )
+        lines += [
+            "# HELP resource_dashboard_gpu_memory_used_mb GPU memory used in MB",
+            "# TYPE resource_dashboard_gpu_memory_used_mb gauge",
+        ]
+        for g in gpus:
+            lines.append(
+                f'resource_dashboard_gpu_memory_used_mb{{gpu="{g["index"]}"}} {g["memory_used"]}'
+            )
+
+    return "\n".join(lines) + "\n"
 
 
 def sample_metrics(sample_root: Path, top_limit: int) -> Dict[str, object]:
@@ -463,6 +709,11 @@ def sample_metrics(sample_root: Path, top_limit: int) -> Dict[str, object]:
     processes = read_top_processes(top_limit)
     cpu_temps = read_cpu_temperature()
     zombies = count_zombie_processes()
+
+    # ---- Merge per-process GPU memory usage into the process list ----
+    gpu_mem_by_pid = {p["pid"]: p["gpu_mem_mb"] for p in gpu_procs}
+    for p in processes:
+        p["gpu_mem_mb"] = gpu_mem_by_pid.get(p["pid"])
 
     with STATE_LOCK:
         # ---- CPU overall ----
@@ -589,7 +840,9 @@ def sample_metrics(sample_root: Path, top_limit: int) -> Dict[str, object]:
         if len(STATE.csv_rows) > 10000:
             STATE.csv_rows = STATE.csv_rows[-10000:]
 
-    return {
+    record_history_row(csv_row)
+
+    data = {
         "timestamp": now,
         "host": socket.gethostname(),
         "platform": platform.platform(),
@@ -633,6 +886,9 @@ def sample_metrics(sample_root: Path, top_limit: int) -> Dict[str, object]:
         "processes": processes,
         "active_user": os.environ.get("USER", "unknown"),
     }
+
+    maybe_fire_alert_webhook(data)
+    return data
 
 
 def generate_csv(since: Optional[float] = None) -> str:
@@ -706,6 +962,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_text(self, text: str, content_type: str) -> None:
+        data = text.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self._add_security_headers(is_api=True)
+        self.end_headers()
+        self.wfile.write(data)
+
     def _check_auth(self) -> bool:
         """Return True if the request is authorized; otherwise send a 401 and return False."""
         expected_auth = getattr(self.server, 'auth', None)
@@ -745,6 +1011,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
             root = Path(self.server.sample_root)  # type: ignore[attr-defined]
             top_limit = int(self.server.top_limit)  # type: ignore[attr-defined]
             self._send_json(sample_metrics(root, top_limit))
+            return
+        if parsed.path == "/metrics":
+            root = Path(self.server.sample_root)  # type: ignore[attr-defined]
+            top_limit = int(self.server.top_limit)  # type: ignore[attr-defined]
+            self._send_text(render_prometheus(sample_metrics(root, top_limit)), "text/plain; version=0.0.4; charset=utf-8")
+            return
+        if parsed.path == "/api/history":
+            query = parse_qs(parsed.query)
+
+            def _parse_float(name: str) -> Optional[float]:
+                raw = query.get(name, [None])[0]
+                if raw is None:
+                    return None
+                try:
+                    return float(raw)
+                except ValueError:
+                    return None
+
+            since = _parse_float("since")
+            until = _parse_float("until")
+            try:
+                limit = min(20000, max(1, int(query.get("limit", [2000])[0])))
+            except ValueError:
+                limit = 2000
+            self._send_json({"rows": query_history(since, until, limit)})
             return
         if parsed.path == "/api/export_csv":
             query = parse_qs(parsed.query)
@@ -790,6 +1081,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top", type=int, default=DEFAULT_TOP_PROCESSES, help="Number of top processes to display.")
     parser.add_argument("--no-browser", action="store_true", help="Do not open the dashboard automatically in a browser.")
     parser.add_argument("--auth", help="Basic auth credentials in format user:pass")
+    parser.add_argument(
+        "--allow-insecure",
+        action="store_true",
+        help="Allow binding to a non-localhost address without --auth (dangerous; exposes metrics and the kill-process endpoint to the network).",
+    )
     return parser.parse_args()
 
 
@@ -808,9 +1104,33 @@ def main() -> None:
             args.host = config['Server'].get('host', args.host)
             args.port = config['Server'].getint('port', args.port)
             args.auth = config['Server'].get('auth', getattr(args, 'auth', None))
+        if 'Alerts' in config:
+            alerts_cfg = config['Alerts']
+            ALERT_CONFIG['webhook_url'] = alerts_cfg.get('webhook_url', None) or None
+            ALERT_CONFIG['cooldown_seconds'] = alerts_cfg.getfloat('cooldown_seconds', ALERT_CONFIG['cooldown_seconds'])
+            ALERT_CONFIG['cpu_percent'] = alerts_cfg.getfloat('cpu_percent', ALERT_CONFIG['cpu_percent'])
+            ALERT_CONFIG['mem_percent'] = alerts_cfg.getfloat('mem_percent', ALERT_CONFIG['mem_percent'])
+            ALERT_CONFIG['gpu_temp_c'] = alerts_cfg.getfloat('gpu_temp_c', ALERT_CONFIG['gpu_temp_c'])
+            ALERT_CONFIG['iowait_percent'] = alerts_cfg.getfloat('iowait_percent', ALERT_CONFIG['iowait_percent'])
+
     sample_root = Path(args.root).expanduser().resolve()
     if not sample_root.exists():
         raise SystemExit(f"Path does not exist: {sample_root}")
+
+    is_local_bind = args.host in ("127.0.0.1", "localhost", "::1")
+    if not is_local_bind and not args.auth and not args.allow_insecure:
+        raise SystemExit(
+            f"Refusing to bind to {args.host} without --auth: this would expose live metrics and "
+            "the process-kill endpoint to your network unauthenticated. Pass --auth user:pass, or "
+            "--allow-insecure if you understand and accept the risk."
+        )
+    if not is_local_bind and not args.auth:
+        logging.warning(
+            f"Starting on {args.host} without authentication (--allow-insecure was set). "
+            "Anyone on your network can view metrics and kill processes on this machine."
+        )
+
+    start_history_writer()
 
     server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     server.sample_root = sample_root  # type: ignore[attr-defined]
@@ -820,6 +1140,8 @@ def main() -> None:
     url = f"http://{args.host}:{args.port}/"
     logging.info(f"Serving resource dashboard at {url}")
     logging.info(f"Monitoring disk path: {sample_root}")
+    if ALERT_CONFIG.get('webhook_url'):
+        logging.info("Server-side alert webhook is configured.")
 
     if not args.no_browser:
       webbrowser.open(url)

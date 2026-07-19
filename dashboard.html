@@ -484,8 +484,9 @@
               <th class="sortable" data-sort="name">Command<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="cpu">CPU%<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="mem">MEM%<span class="sort-arrow"></span></th>
-              <th class="sortable" data-sort="rss_bytes">RSS<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="rss_kb">RSS<span class="sort-arrow"></span></th>
               <th>Stat</th>
+              <th class="sortable" data-sort="gpu_mem_mb">GPU Mem<span class="sort-arrow"></span></th>
               <th>Kill</th>
             </tr>
           </thead>
@@ -830,7 +831,7 @@
       const key = procSortKey;
       rows = rows.slice().sort((a, b) => {
         let av = a[key], bv = b[key];
-        if (key === 'pid' || key === 'cpu' || key === 'mem' || key === 'rss_kb') {
+        if (key === 'pid' || key === 'cpu' || key === 'mem' || key === 'rss_kb' || key === 'gpu_mem_mb') {
           av = Number(av) || 0; bv = Number(bv) || 0;
           return (av - bv) * procSortDir;
         }
@@ -845,6 +846,7 @@
           <td>${Number(p.mem).toFixed(1)}</td>
           <td>${escapeHtml(p.rss)}</td>
           <td>${escapeHtml(p.stat)}</td>
+          <td>${p.gpu_mem_mb ? escapeHtml(p.gpu_mem_mb) + ' MB' : '—'}</td>
           <td><button class="kill-btn" data-pid="${escapeHtml(p.pid)}" data-name="${escapeHtml(p.name)}" aria-label="Kill process ${escapeHtml(p.name)} (PID ${escapeHtml(p.pid)})">✕</button></td>
         </tr>
       `).join('');

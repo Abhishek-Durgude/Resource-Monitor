@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-VERSION="1.1-5"
+VERSION="1.2-1"
 PKG_NAME="resource-dashboard"
 ARCH="all"
 BUILD_DIR="${PKG_NAME}_${VERSION}_${ARCH}"
@@ -16,6 +16,7 @@ mkdir -p "$BUILD_DIR/usr/share/$PKG_NAME"
 mkdir -p "$BUILD_DIR/usr/bin"
 mkdir -p "$BUILD_DIR/usr/share/applications"
 mkdir -p "$BUILD_DIR/usr/share/icons/hicolor/scalable/apps"
+mkdir -p "$BUILD_DIR/usr/lib/systemd/system"
 
 # 2. Create control file
 cat <<EOF > "$BUILD_DIR/DEBIAN/control"
@@ -40,6 +41,9 @@ chmod +x "$BUILD_DIR/usr/share/$PKG_NAME/resource_dashboard_app.py"
 # 4. Copy icon
 cp resource_dashboard_icon.svg "$BUILD_DIR/usr/share/$PKG_NAME/"
 cp resource_dashboard_icon.svg "$BUILD_DIR/usr/share/icons/hicolor/scalable/apps/${PKG_NAME}.svg"
+
+# 4b. Install systemd unit for headless mode
+cp packaging/resource-dashboard@.service "$BUILD_DIR/usr/lib/systemd/system/"
 
 # 5. Create desktop file
 cat <<EOF > "$BUILD_DIR/usr/share/applications/$PKG_NAME.desktop"

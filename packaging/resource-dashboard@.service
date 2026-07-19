@@ -1,0 +1,15 @@
+[Unit]
+Description=Resource Dashboard (headless HTTP server, user %i)
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/bin/python3 /usr/share/resource-dashboard/resource_dashboard.py --no-browser
+Restart=on-failure
+RestartSec=5
+# Uncomment to pin thresholds/webhook via ~/.config/resource-dashboard/config.ini instead:
+# Environment=HOME=/home/%i
+
+[Install]
+WantedBy=multi-user.target
