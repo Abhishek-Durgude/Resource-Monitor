@@ -23,6 +23,7 @@
     }
 
     [data-theme="light"] {
+      color-scheme: light;
       --bg: #f0f4f8;
       --panel: rgba(255, 255, 255, 0.92);
       --panel-border: rgba(148, 163, 184, 0.25);
@@ -147,7 +148,8 @@
     .toolbar {
       display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px;
       padding: 10px 16px; border-radius: 14px;
-      background: rgba(15, 23, 42, 0.6); border: 1px solid var(--panel-border);
+      background: var(--panel); border: 1px solid var(--panel-border);
+      backdrop-filter: blur(12px);
     }
     .toolbar label { font-size: 0.85rem; color: var(--muted); }
     .toolbar select, .toolbar input[type=range] {
@@ -197,7 +199,7 @@
     .chart-tooltip {
       position: fixed; pointer-events: none; z-index: 1000;
       padding: 6px 12px; border-radius: 8px;
-      background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(148, 163, 184, 0.2);
+      background: var(--panel); border: 1px solid var(--panel-border);
       color: var(--text); font-size: 0.78rem; font-weight: 600;
       backdrop-filter: blur(8px); opacity: 0; transition: opacity 0.15s ease;
       font-variant-numeric: tabular-nums;
@@ -269,7 +271,7 @@
     .health-breakdown {
       display: none; position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%);
       width: 200px; padding: 10px 12px; border-radius: 12px; z-index: 20;
-      background: rgba(15, 23, 42, 0.97); border: 1px solid rgba(148, 163, 184, 0.25);
+      background: var(--panel); border: 1px solid var(--panel-border); backdrop-filter: blur(12px);
       color: var(--text); font-size: 0.78rem; text-align: left; box-shadow: 0 12px 30px rgba(0,0,0,0.4);
     }
     .health-score-box:hover .health-breakdown, .health-score-box:focus-within .health-breakdown { display: block; }
@@ -681,23 +683,34 @@
     }
 
     // ---- Animated number counters ----
+    const _animTokens = {};
     function animateValue(elementId, newValue, suffix, decimals) {
       const el = document.getElementById(elementId);
       if (!el) return;
-      const current = parseFloat(el.textContent) || 0;
+      const current = parseFloat(el.dataset.animValue ?? el.textContent) || 0;
       const target = parseFloat(newValue) || 0;
+      // Invalidate any in-flight animation on this element so overlapping
+      // refresh() calls (e.g. rAF resuming after a throttled background tab)
+      // can't race each other and write divergent/garbage values.
+      const token = (_animTokens[elementId] = (_animTokens[elementId] || 0) + 1);
       if (Math.abs(current - target) < 0.1) {
         el.textContent = target.toFixed(decimals || 1) + (suffix || '');
+        el.dataset.animValue = target;
         return;
       }
       const duration = 400;
       const start = performance.now();
       function tick(now) {
+        if (_animTokens[elementId] !== token) return; // superseded by a newer call
         const elapsed = now - start;
-        const progress = Math.min(elapsed / duration, 1);
+        // Clamp to [0, 1]: a negative elapsed (clock/rAF timestamp inconsistency)
+        // would otherwise send the ease-out curve to a huge out-of-range value.
+        const progress = Math.max(0, Math.min(elapsed / duration, 1));
         const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
-        const value = current + (target - current) * eased;
+        let value = current + (target - current) * eased;
+        if (!Number.isFinite(value)) value = target;
         el.textContent = value.toFixed(decimals || 1) + (suffix || '');
+        el.dataset.animValue = value;
         if (progress < 1) requestAnimationFrame(tick);
       }
       requestAnimationFrame(tick);
