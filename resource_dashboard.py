@@ -20,6 +20,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import threading
@@ -363,10 +364,41 @@ def read_top_processes(limit: int) -> List[Dict[str, str]]:
                     "cpu": cpu,
                     "mem": mem,
                     "rss": human_bytes(int(rss) * 1024),
+                    "rss_kb": int(rss),
                     "stat": stat,
                 }
             )
     return processes
+
+
+def kill_process(pid: int, sig_name: str) -> Dict[str, Any]:
+    """Send a signal to a process, guarding against killing critical PIDs."""
+    if pid <= 1:
+        return {"success": False, "message": "Refusing to signal PID 0/1."}
+    if pid == os.getpid():
+        return {"success": False, "message": "Refusing to kill the dashboard server itself."}
+
+    sig = {"TERM": signal.SIGTERM, "KILL": signal.SIGKILL}.get(sig_name.upper())
+    if sig is None:
+        return {"success": False, "message": f"Unsupported signal: {sig_name}"}
+
+    try:
+        os.kill(pid, 0)  # existence/permission check first
+    except ProcessLookupError:
+        return {"success": False, "message": f"No such process: {pid}"}
+    except PermissionError:
+        return {"success": False, "message": f"Permission denied for PID {pid}."}
+
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        return {"success": False, "message": f"No such process: {pid}"}
+    except PermissionError:
+        return {"success": False, "message": f"Permission denied for PID {pid}."}
+    except OSError as exc:
+        return {"success": False, "message": str(exc)}
+
+    return {"success": True, "message": f"Sent {sig_name.upper()} to PID {pid}."}
 
 
 def count_zombie_processes() -> int:
@@ -603,10 +635,12 @@ def sample_metrics(sample_root: Path, top_limit: int) -> Dict[str, object]:
     }
 
 
-def generate_csv() -> str:
-    """Generate CSV string from stored metric rows."""
+def generate_csv(since: Optional[float] = None) -> str:
+    """Generate CSV string from stored metric rows, optionally filtered to timestamp >= since."""
     with STATE_LOCK:
         rows = list(STATE.csv_rows)
+    if since is not None:
+        rows = [r for r in rows if r["timestamp"] >= since]
     if not rows:
         return "No data collected yet.\n"
     output = io.StringIO()
@@ -672,29 +706,36 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-        # Auth check
+    def _check_auth(self) -> bool:
+        """Return True if the request is authorized; otherwise send a 401 and return False."""
         expected_auth = getattr(self.server, 'auth', None)
-        if expected_auth:
-            auth_header = self.headers.get('Authorization')
-            if not auth_header or not auth_header.startswith('Basic '):
-                self.send_response(401)
-                self.send_header('WWW-Authenticate', 'Basic realm="Dashboard"')
-                self.end_headers()
-                self.wfile.write(b"Authentication required")
-                return
-            
-            encoded = auth_header.split(' ', 1)[1]
-            try:
-                decoded = base64.b64decode(encoded).decode('utf-8')
-                if decoded != expected_auth:
-                    raise ValueError("Invalid auth")
-            except Exception:
-                self.send_response(401)
-                self.send_header('WWW-Authenticate', 'Basic realm="Dashboard"')
-                self.end_headers()
-                self.wfile.write(b"Authentication failed")
-                return
+        if not expected_auth:
+            return True
+
+        auth_header = self.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Basic '):
+            self.send_response(401)
+            self.send_header('WWW-Authenticate', 'Basic realm="Dashboard"')
+            self.end_headers()
+            self.wfile.write(b"Authentication required")
+            return False
+
+        encoded = auth_header.split(' ', 1)[1]
+        try:
+            decoded = base64.b64decode(encoded).decode('utf-8')
+            if decoded != expected_auth:
+                raise ValueError("Invalid auth")
+        except Exception:
+            self.send_response(401)
+            self.send_header('WWW-Authenticate', 'Basic realm="Dashboard"')
+            self.end_headers()
+            self.wfile.write(b"Authentication failed")
+            return False
+        return True
+
+    def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        if not self._check_auth():
+            return
 
         parsed = urlparse(self.path)
         if parsed.path == "/":
@@ -706,7 +747,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(sample_metrics(root, top_limit))
             return
         if parsed.path == "/api/export_csv":
-            self._send_csv(generate_csv())
+            query = parse_qs(parsed.query)
+            since_raw = query.get("since", [None])[0]
+            since = None
+            if since_raw is not None:
+                try:
+                    since = float(since_raw)
+                except ValueError:
+                    since = None
+            self._send_csv(generate_csv(since))
+            return
+        self.send_error(404, "Not Found")
+
+    def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        if not self._check_auth():
+            return
+
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/kill_process":
+            length = int(self.headers.get('Content-Length', 0) or 0)
+            body = self.rfile.read(length) if length else b"{}"
+            try:
+                payload = json.loads(body.decode('utf-8'))
+                pid = int(payload.get("pid"))
+                sig_name = str(payload.get("signal", "TERM"))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._send_json({"success": False, "message": "Invalid request body."})
+                return
+            self._send_json(kill_process(pid, sig_name))
             return
         self.send_error(404, "Not Found")
 

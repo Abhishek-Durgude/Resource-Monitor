@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# AndroidApp (Expo/React Native)
+AndroidApp/node_modules/
+AndroidApp/.expo/
+AndroidApp/android/.gradle/
+AndroidApp/android/app/build/
+
+# editor/OS cruft
+.DS_Store
+*.swp
