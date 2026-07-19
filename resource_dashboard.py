@@ -888,7 +888,17 @@ def sample_metrics(sample_root: Path, top_limit: int) -> Dict[str, object]:
     }
 
     maybe_fire_alert_webhook(data)
+    data["alerts_config"] = get_alerts_status()
     return data
+
+
+def get_alerts_status() -> Dict[str, Any]:
+    with STATE_LOCK:
+        last_sent = max(STATE.alert_state.values()) if STATE.alert_state else None
+    return {
+        "webhook_configured": bool(ALERT_CONFIG.get("webhook_url")),
+        "last_alert_sent": last_sent,
+    }
 
 
 def generate_csv(since: Optional[float] = None) -> str:
@@ -897,6 +907,10 @@ def generate_csv(since: Optional[float] = None) -> str:
         rows = list(STATE.csv_rows)
     if since is not None:
         rows = [r for r in rows if r["timestamp"] >= since]
+    return rows_to_csv(rows)
+
+
+def rows_to_csv(rows: List[Dict[str, Any]]) -> str:
     if not rows:
         return "No data collected yet.\n"
     output = io.StringIO()
@@ -1035,7 +1049,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 limit = min(20000, max(1, int(query.get("limit", [2000])[0])))
             except ValueError:
                 limit = 2000
-            self._send_json({"rows": query_history(since, until, limit)})
+            rows = query_history(since, until, limit)
+            if query.get("format", [None])[0] == "csv":
+                self._send_csv(rows_to_csv(rows))
+            else:
+                self._send_json({"rows": rows})
             return
         if parsed.path == "/api/export_csv":
             query = parse_qs(parsed.query)

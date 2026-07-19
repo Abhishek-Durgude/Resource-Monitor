@@ -32,10 +32,11 @@ A native Linux desktop application and standalone HTTP server for live system re
 - **Disk & Network:** Disk I/O read/write rates and network rx/tx throughput.
 - **Process Management:** Sortable, filterable top-processes table with a one-click kill button (guarded against killing the dashboard itself or system-critical PIDs), and per-process GPU memory usage merged in when a process is running compute on the GPU.
 - **Alerts & Notifications:** Custom threshold UI for alerts (persisted across reloads), historical alert log, desktop notifications when the GPU drops to idle, and an optional server-side webhook so alerts reach you even with the tab closed.
-- **Export & History:** Download historical metrics as a CSV file, export just the current training-timer session, view metric tooltips on chart hover, and query long-term history back to 30 days via a local SQLite store (`/api/history`).
-- **Monitoring Integrations:** A Prometheus-compatible `/metrics` endpoint for scraping into Grafana or any Prometheus-based stack.
+- **Export & History:** Download historical metrics as a CSV file, export just the current training-timer session, view metric tooltips on chart hover, and browse long-term history (up to 30 days) in-app via the **📈 History** modal — pick a metric and a time range (1h/6h/24h/7d/30d) and export that exact range as CSV.
+- **Monitoring Integrations:** A Prometheus-compatible `/metrics` endpoint for scraping into Grafana or any Prometheus-based stack, plus a toolbar badge showing whether the server-side alert webhook is active and when it last fired.
 - **Resilient UX:** Connection-lost banner with retry status and an initial loading state, so a dropped server connection is never silently stale.
 - **Accessible:** ARIA labels on gauges/live regions and non-color-only cues for alert states.
+- **UI Polish:** Theme-aware chart colors (separate palettes tuned for dark/light contrast), an expand toggle to widen the Top Processes table to full width, GPU-active rows highlighted in the process table, and "⤢" expand icons on every trend chart that jump straight into the History modal for that metric.
 - **Headless / Server Mode:** Runs with zero GUI dependencies; ships a systemd service template for running as a background service that survives logout/reboot.
 - **Native Desktop App:** GTK3 + WebKit2 wrapper offering window state persistence, minimize-to-tray, system tray icon, keyboard shortcuts, always-on-top pinning, and fullscreen mode.
 
@@ -48,10 +49,10 @@ To get full functionality (especially the GPU telemetry), your system should hav
 
 ### Method 1: Using the `.deb` Package (Recommended for Debian/Ubuntu)
 
-1. **[Download the latest `.deb` package](https://github.com/Abhishek-Durgude/Resource-Monitor/raw/main/resource-dashboard_1.2-1_all.deb)** from this repository.
+1. **[Download the latest `.deb` package](https://github.com/Abhishek-Durgude/Resource-Monitor/raw/main/resource-dashboard_1.2-2_all.deb)** from this repository.
 2. Install it using `apt` (this automatically handles required dependencies):
    ```bash
-   sudo apt install ./resource-dashboard_1.2-1_all.deb
+   sudo apt install ./resource-dashboard_1.2-2_all.deb
    ```
 3. You can now launch it from your application menu or terminal!
 
@@ -98,7 +99,7 @@ When the dashboard is open, you can use these shortcuts:
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/api/metrics` | GET | Live snapshot used by the dashboard UI (JSON). |
-| `/api/history` | GET | Long-term history from SQLite. Query params: `since`, `until` (unix seconds), `limit` (default 2000, max 20000). |
+| `/api/history` | GET | Long-term history from SQLite. Query params: `since`, `until` (unix seconds), `limit` (default 2000, max 20000), `format=csv` for a CSV download instead of JSON. Powers the in-app History modal. |
 | `/api/export_csv` | GET | Download in-memory metrics as CSV. Optional `?since=<unix ts>` to export just one session. |
 | `/api/kill_process` | POST | `{"pid": 1234, "signal": "TERM"}` — see [Process Kill Safety](#-process-kill-safety) below. |
 | `/metrics` | GET | Prometheus text-exposition format, for scraping with Prometheus/Grafana. |

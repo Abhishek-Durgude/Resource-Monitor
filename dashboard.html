@@ -290,6 +290,66 @@
       position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
       overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
     }
+
+    /* --- Webhook/alert status badge --- */
+    .webhook-badge {
+      display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
+      border-radius: 999px; font-size: 0.76rem; font-weight: 600;
+      background: rgba(148, 163, 184, 0.1); border: 1px solid var(--panel-border); color: var(--muted);
+    }
+    .webhook-badge.active { background: rgba(74, 222, 128, 0.14); border-color: rgba(74, 222, 128, 0.4); color: var(--good); }
+    .webhook-badge .dot2 { width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
+
+    /* --- Chart expand icon --- */
+    .chart-expand-btn {
+      background: none; border: none; color: var(--muted); cursor: pointer;
+      font-size: 0.85rem; padding: 2px 4px; line-height: 1; border-radius: 6px;
+    }
+    .chart-expand-btn:hover { color: var(--accent-2); background: rgba(96, 165, 250, 0.12); }
+
+    /* --- Panel expand toggle --- */
+    .panel-expand-btn {
+      background: none; border: none; color: var(--muted); cursor: pointer;
+      font-size: 0.85rem; padding: 2px 6px; border-radius: 6px;
+    }
+    .panel-expand-btn:hover { color: var(--accent-2); background: rgba(96, 165, 250, 0.12); }
+
+    /* --- GPU-active process row highlight --- */
+    tr.gpu-row td:first-child { box-shadow: inset 3px 0 0 var(--accent-2); }
+    tr.gpu-row td:nth-child(7) { color: var(--accent-2); font-weight: 700; }
+
+    /* --- History modal --- */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 800;
+      background: rgba(5, 8, 16, 0.6); backdrop-filter: blur(3px);
+      align-items: flex-start; justify-content: center; padding: 5vh 16px;
+    }
+    .modal-overlay.visible { display: flex; }
+    .modal-box {
+      background: var(--panel); border: 1px solid var(--panel-border); border-radius: 20px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.45); max-width: 980px; width: 100%;
+      padding: 20px; backdrop-filter: blur(14px);
+    }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .modal-header h2 { margin: 0; font-size: 1.1rem; }
+    .modal-close-btn {
+      background: none; border: 1px solid var(--panel-border); color: var(--text); cursor: pointer;
+      border-radius: 8px; width: 30px; height: 30px; font-size: 1rem; line-height: 1;
+    }
+    .modal-close-btn:hover { background: rgba(251, 113, 133, 0.15); border-color: var(--danger); color: var(--danger); }
+    .modal-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+    .modal-controls select {
+      background: rgba(148,163,184,0.12); border: 1px solid var(--panel-border);
+      color: var(--text); border-radius: 8px; padding: 5px 10px; font-size: 0.85rem;
+    }
+    .range-btn {
+      padding: 5px 12px; border-radius: 999px; border: 1px solid var(--panel-border);
+      background: rgba(148,163,184,0.08); color: var(--muted); cursor: pointer; font-size: 0.8rem; font-weight: 600;
+    }
+    .range-btn.active { background: rgba(94, 234, 212, 0.18); border-color: rgba(94, 234, 212, 0.5); color: var(--text); }
+    .modal-chart-wrap { position: relative; }
+    .modal-chart-wrap .chart { height: 280px; }
+    .modal-empty-state { text-align: center; color: var(--muted); padding: 40px 0; font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -323,6 +383,10 @@
         </select>
       </div>
       <div class="toolbar-actions">
+        <span class="webhook-badge" id="webhook-badge" title="Server-side alert webhook status">
+          <span class="dot2"></span><span id="webhook-badge-text">Webhook: unknown</span>
+        </span>
+        <button class="export-btn" id="history-btn" onclick="openHistoryModal()">📈 History</button>
         <button class="export-btn" id="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
         <a class="export-btn" href="/api/export_csv" download="resource_metrics.csv">📥 Export CSV</a>
         <button class="export-btn session-export" id="session-export-btn" onclick="exportSessionCsv()" disabled title="Start the training timer to enable">📥 Export Since Timer Start</button>
@@ -420,13 +484,13 @@
     <!-- Row 1: CPU Trend + IO-Wait, Memory Trend -->
     <div class="grid">
       <div class="panel span-6" id="panel-cpu">
-        <div class="section-head"><h2>CPU Trend</h2><span class="tiny">overall + io-wait</span></div>
+        <div class="section-head"><h2>CPU Trend</h2><span class="tiny">overall + io-wait<button class="chart-expand-btn" onclick="openHistoryModal('cpu_percent')" title="View long-term CPU history" aria-label="Expand CPU trend to long-term history">⤢</button></span></div>
         <svg class="chart" id="cpu-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
         <div class="section-head" style="margin-top:10px;"><h2>Per-Core Heatmap</h2><span class="tiny" id="core-count"></span></div>
         <div class="heatmap-grid" id="cpu-heatmap"></div>
       </div>
       <div class="panel span-6" id="panel-mem">
-        <div class="section-head"><h2>Memory Trend</h2><span class="tiny">used %</span></div>
+        <div class="section-head"><h2>Memory Trend</h2><span class="tiny">used %<button class="chart-expand-btn" onclick="openHistoryModal('mem_percent')" title="View long-term memory history" aria-label="Expand memory trend to long-term history">⤢</button></span></div>
         <svg class="chart" id="mem-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
         <div id="mem-details" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 0.82rem; color: var(--muted);"></div>
       </div>
@@ -438,11 +502,11 @@
         <div class="gpu-tabs" id="gpu-tabs" role="tablist" aria-label="Select GPU to display"></div>
       </div>
       <div class="panel span-6">
-        <div class="section-head"><h2>GPU Utilization Trend</h2><span class="tiny" id="gpu-util-tab-label">core % avg</span></div>
+        <div class="section-head"><h2>GPU Utilization Trend</h2><span class="tiny"><span id="gpu-util-tab-label">core % avg</span><button class="chart-expand-btn" onclick="openHistoryModal('gpu_util_avg')" title="View long-term GPU history" aria-label="Expand GPU trend to long-term history">⤢</button></span></div>
         <svg class="chart" id="gpu-util-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
       </div>
       <div class="panel span-6">
-        <div class="section-head"><h2>GPU Memory / Temp / Power</h2><span class="tiny">history</span></div>
+        <div class="section-head"><h2>GPU Memory / Temp / Power</h2><span class="tiny">history<button class="chart-expand-btn" onclick="openHistoryModal('gpu_temp_max')" title="View long-term GPU temperature history" aria-label="Expand GPU temperature to long-term history">⤢</button></span></div>
         <svg class="chart" id="gpu-extra-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
         <div style="display: flex; gap: 14px; margin-top: 6px; font-size: 0.78rem; color: var(--muted);">
           <span>🟢 Mem%</span><span>🟠 Temp°C</span><span>🔵 Power W</span>
@@ -453,11 +517,11 @@
     <!-- Row 3: Network, Disk I/O -->
     <div class="grid">
       <div class="panel span-6">
-        <div class="section-head"><h2>Network Trend</h2><span class="tiny">rx / tx rates</span></div>
+        <div class="section-head"><h2>Network Trend</h2><span class="tiny">rx / tx rates<button class="chart-expand-btn" onclick="openHistoryModal('net_rx_rate|net_tx_rate')" title="View long-term network history" aria-label="Expand network trend to long-term history">⤢</button></span></div>
         <svg class="chart" id="net-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
       </div>
       <div class="panel span-6">
-        <div class="section-head"><h2>Disk I/O Trend</h2><span class="tiny">read / write throughput</span></div>
+        <div class="section-head"><h2>Disk I/O Trend</h2><span class="tiny">read / write throughput<button class="chart-expand-btn" onclick="openHistoryModal('disk_read_rate|disk_write_rate')" title="View long-term disk I/O history" aria-label="Expand disk I/O trend to long-term history">⤢</button></span></div>
         <svg class="chart" id="diskio-chart" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
         <div style="display: flex; gap: 14px; margin-top: 6px; font-size: 0.78rem; color: var(--muted);">
           <span>🟢 Read</span><span>🔵 Write</span>
@@ -472,8 +536,8 @@
         <h2>System Info</h2>
         <div class="gpu-card" id="sysinfo-box"></div>
       </div>
-      <div class="panel span-5">
-        <div class="section-head"><h2>Top Processes</h2><span class="tiny">click a column to sort</span></div>
+      <div class="panel span-5" id="panel-processes">
+        <div class="section-head"><h2>Top Processes</h2><span class="tiny">click a column to sort<button class="panel-expand-btn" id="proc-expand-btn" onclick="toggleProcessPanelExpand()" title="Expand table to full width" aria-label="Toggle process table full-width">⤢</button></span></div>
         <div class="proc-controls">
           <input type="text" class="proc-filter" id="proc-filter" placeholder="Filter by name or PID…" aria-label="Filter processes by name or PID" />
         </div>
@@ -515,6 +579,36 @@
     </div>
 
     <div class="chart-tooltip" id="chart-tooltip"></div>
+
+    <!-- History modal -->
+    <div class="modal-overlay" id="history-modal" role="dialog" aria-modal="true" aria-labelledby="history-modal-title">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h2 id="history-modal-title">📈 Long-Term History</h2>
+          <button class="modal-close-btn" onclick="closeHistoryModal()" aria-label="Close history">✕</button>
+        </div>
+        <div class="modal-controls">
+          <button class="range-btn" data-range="3600">Last 1h</button>
+          <button class="range-btn" data-range="21600">Last 6h</button>
+          <button class="range-btn active" data-range="86400">Last 24h</button>
+          <button class="range-btn" data-range="604800">Last 7d</button>
+          <button class="range-btn" data-range="2592000">Last 30d</button>
+          <select id="history-metric" aria-label="Metric to display">
+            <option value="cpu_percent">CPU %</option>
+            <option value="mem_percent">Memory %</option>
+            <option value="gpu_util_avg">GPU Utilization %</option>
+            <option value="gpu_temp_max">GPU Temp °C</option>
+            <option value="disk_read_rate|disk_write_rate">Disk I/O (read/write)</option>
+            <option value="net_rx_rate|net_tx_rate">Network (rx/tx)</option>
+          </select>
+          <a class="export-btn" id="history-export-btn" href="#" style="margin-left:auto;">📥 Export This Range</a>
+        </div>
+        <div class="modal-chart-wrap">
+          <svg class="chart" id="history-chart" viewBox="0 0 900 280" preserveAspectRatio="none"></svg>
+          <div class="modal-empty-state" id="history-empty" style="display:none;">No history data in this range yet — data accumulates the longer the server has been running.</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -532,6 +626,18 @@
       document.body.prepend(errEl);
     });
     
+    // ---- Chart color palette (theme-aware) ----
+    // Dark-theme colors are tuned for a dark glass background; light-theme colors are
+    // darkened/desaturated versions of the same hues to keep contrast readable on a light card.
+    const CHART_PALETTE = {
+      dark: { blue: '#60a5fa', orange: '#f97316', yellow: '#fbbf24', cyan: '#22d3ee', green: '#4ade80', purple: '#a78bfa' },
+      light: { blue: '#1d4ed8', orange: '#c2410c', yellow: '#b45309', cyan: '#0e7490', green: '#15803d', purple: '#6d28d9' },
+    };
+    function chartColor(name) {
+      const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+      return (CHART_PALETTE[theme] || CHART_PALETTE.dark)[name] || CHART_PALETTE.dark[name];
+    }
+
     // ---- Theme toggle ----
     function toggleTheme() {
       const html = document.documentElement;
@@ -540,6 +646,8 @@
       html.setAttribute('data-theme', next);
       document.getElementById('theme-toggle').textContent = next === 'dark' ? '🌙 Dark' : '☀️ Light';
       localStorage.setItem('dashboard_theme', next);
+      if (hasLoadedOnce) refresh();
+      if (document.getElementById('history-modal')?.classList.contains('visible')) loadHistoryData();
     }
     // Restore theme
     (function() {
@@ -621,6 +729,23 @@
     // ---- Per-GPU history state ----
     const gpuHistories = new Map(); // index -> { util: [], mem: [], temp: [], power: [] }
     let selectedGpuTab = 'avg';
+
+    // ---- Webhook/alert status badge ----
+    function updateWebhookBadge(alertsConfig) {
+      const badge = document.getElementById('webhook-badge');
+      const text = document.getElementById('webhook-badge-text');
+      if (!badge || !alertsConfig) return;
+      if (alertsConfig.webhook_configured) {
+        badge.classList.add('active');
+        const last = alertsConfig.last_alert_sent;
+        text.textContent = last
+          ? `Webhook: active (last alert ${new Date(last * 1000).toLocaleTimeString()})`
+          : 'Webhook: active';
+      } else {
+        badge.classList.remove('active');
+        text.textContent = 'Webhook: not configured';
+      }
+    }
 
     // ---- Connection status ----
     function setConnectionState(ok) {
@@ -839,7 +964,7 @@
       });
 
       body.innerHTML = rows.map(p => `
-        <tr>
+        <tr class="${p.gpu_mem_mb ? 'gpu-row' : ''}">
           <td>${escapeHtml(p.pid)}</td>
           <td>${escapeHtml(p.name)}</td>
           <td>${Number(p.cpu).toFixed(1)}</td>
@@ -918,6 +1043,91 @@
         `<div class="gpu-item"><span style="font-weight:600;">PID ${escapeHtml(p.pid)}</span> · ${escapeHtml(p.name)} · <span style="color:var(--accent);">${escapeHtml(p.gpu_mem_mb)} MB</span></div>`
       ).join('');
     }
+
+    // ---- Long-term history modal ----
+    const METRIC_LABELS = {
+      cpu_percent: { label: 'CPU %', colors: ['blue'] },
+      mem_percent: { label: 'Memory %', colors: ['yellow'] },
+      gpu_util_avg: { label: 'GPU Utilization %', colors: ['cyan'] },
+      gpu_temp_max: { label: 'GPU Temp °C', colors: ['orange'] },
+      'disk_read_rate|disk_write_rate': { label: 'Disk I/O (read/write, KB/s)', colors: ['green', 'blue'] },
+      'net_rx_rate|net_tx_rate': { label: 'Network (rx/tx, KB/s)', colors: ['green', 'blue'] },
+    };
+    let historyRangeSeconds = 86400;
+
+    function openHistoryModal(metricKey) {
+      const select = document.getElementById('history-metric');
+      if (metricKey && METRIC_LABELS[metricKey]) select.value = metricKey;
+      document.getElementById('history-modal').classList.add('visible');
+      loadHistoryData();
+    }
+    function closeHistoryModal() {
+      document.getElementById('history-modal').classList.remove('visible');
+    }
+
+    async function loadHistoryData() {
+      const metricKey = document.getElementById('history-metric').value;
+      const until = Date.now() / 1000;
+      const since = until - historyRangeSeconds;
+      const exportBtn = document.getElementById('history-export-btn');
+      exportBtn.href = `/api/history?since=${since}&until=${until}&limit=20000&format=csv`;
+
+      let rows = [];
+      try {
+        const res = await fetch(`/api/history?since=${since}&until=${until}&limit=20000`);
+        const json = await res.json();
+        rows = json.rows || [];
+      } catch (err) {
+        console.error('History fetch failed:', err);
+      }
+
+      const emptyEl = document.getElementById('history-empty');
+      const svg = document.getElementById('history-chart');
+      if (!rows.length) {
+        svg.innerHTML = '';
+        emptyEl.style.display = 'block';
+        return;
+      }
+      emptyEl.style.display = 'none';
+
+      const meta = METRIC_LABELS[metricKey];
+      const keys = metricKey.split('|');
+      const datasets = keys.map((k, i) => {
+        const color = chartColor(meta.colors[i]);
+        return { values: rows.map(r => Number(r[k]) || 0), color, fillColor: color };
+      });
+      renderChart('history-chart', datasets);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('history-metric')?.addEventListener('change', loadHistoryData);
+      document.querySelectorAll('.range-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          historyRangeSeconds = parseInt(btn.dataset.range, 10);
+          loadHistoryData();
+        });
+      });
+      document.getElementById('history-modal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'history-modal') closeHistoryModal();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeHistoryModal();
+      });
+    });
+
+    // ---- Top Processes panel expand/collapse ----
+    function toggleProcessPanelExpand() {
+      const panel = document.getElementById('panel-processes');
+      const expanded = panel.classList.toggle('span-12');
+      panel.classList.toggle('span-5', !expanded);
+      document.getElementById('proc-expand-btn').textContent = expanded ? '⤡' : '⤢';
+      localStorage.setItem('proc_panel_expanded', expanded ? '1' : '0');
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      if (localStorage.getItem('proc_panel_expanded') === '1') toggleProcessPanelExpand();
+    });
 
     // ---- Alert threshold settings ----
     function toggleAlertSettings() {
@@ -1070,14 +1280,14 @@
         });
         document.getElementById('gpu-util-tab-label').textContent =
           selectedGpuTab === 'avg' ? 'core % avg' : `GPU ${selectedGpuTab} core %`;
-        renderChart('gpu-util-chart', [{ values: (selectedGpuTab === 'avg' ? gpuUtilHistory : ensureGpuHistory(selectedGpuTab).util), color: '#22d3ee', fillColor: '#22d3ee' }]);
+        renderChart('gpu-util-chart', [{ values: (selectedGpuTab === 'avg' ? gpuUtilHistory : ensureGpuHistory(selectedGpuTab).util), color: chartColor('cyan'), fillColor: chartColor('cyan') }]);
         const h = selectedGpuTab === 'avg'
           ? { mem: gpuMemHistory, temp: gpuTempHistory, power: gpuPowerHistory }
           : ensureGpuHistory(selectedGpuTab);
         renderChart('gpu-extra-chart', [
-          { values: h.mem, color: '#4ade80', fillColor: '#4ade80' },
-          { values: h.temp, color: '#f97316', fillColor: '#f97316' },
-          { values: h.power, color: '#60a5fa', fillColor: '#60a5fa' },
+          { values: h.mem, color: chartColor('green'), fillColor: chartColor('green') },
+          { values: h.temp, color: chartColor('orange'), fillColor: chartColor('orange') },
+          { values: h.power, color: chartColor('blue'), fillColor: chartColor('blue') },
         ]);
       });
     });
@@ -1176,29 +1386,29 @@
 
         // Charts
         renderChart('cpu-chart', [
-          { values: cpuHistory, color: '#60a5fa', fillColor: '#60a5fa' },
-          { values: iowaitHistory, color: '#f97316', fillColor: '#f97316' },
+          { values: cpuHistory, color: chartColor('blue'), fillColor: chartColor('blue') },
+          { values: iowaitHistory, color: chartColor('orange'), fillColor: chartColor('orange') },
         ]);
-        renderChart('mem-chart', [{ values: memHistory, color: '#fbbf24', fillColor: '#fbbf24' }]);
+        renderChart('mem-chart', [{ values: memHistory, color: chartColor('yellow'), fillColor: chartColor('yellow') }]);
         renderChart('net-chart', [
-          { values: data.network.rx_history.map(v => Math.min(v / 1024, 1000)), color: '#4ade80', fillColor: '#4ade80' },
-          { values: data.network.tx_history.map(v => Math.min(v / 1024, 1000)), color: '#60a5fa', fillColor: '#60a5fa' },
+          { values: data.network.rx_history.map(v => Math.min(v / 1024, 1000)), color: chartColor('green'), fillColor: chartColor('green') },
+          { values: data.network.tx_history.map(v => Math.min(v / 1024, 1000)), color: chartColor('blue'), fillColor: chartColor('blue') },
         ]);
         {
           const gpuUtilView = selectedGpuTab === 'avg' ? gpuUtilHistory : ensureGpuHistory(selectedGpuTab).util;
           const gpuExtra = selectedGpuTab === 'avg'
             ? { mem: gpuMemHistory, temp: gpuTempHistory, power: gpuPowerHistory }
             : ensureGpuHistory(selectedGpuTab);
-          renderChart('gpu-util-chart', [{ values: gpuUtilView, color: '#22d3ee', fillColor: '#22d3ee' }]);
+          renderChart('gpu-util-chart', [{ values: gpuUtilView, color: chartColor('cyan'), fillColor: chartColor('cyan') }]);
           renderChart('gpu-extra-chart', [
-            { values: gpuExtra.mem, color: '#4ade80', fillColor: '#4ade80' },
-            { values: gpuExtra.temp, color: '#f97316', fillColor: '#f97316' },
-            { values: gpuExtra.power, color: '#60a5fa', fillColor: '#60a5fa' },
+            { values: gpuExtra.mem, color: chartColor('green'), fillColor: chartColor('green') },
+            { values: gpuExtra.temp, color: chartColor('orange'), fillColor: chartColor('orange') },
+            { values: gpuExtra.power, color: chartColor('blue'), fillColor: chartColor('blue') },
           ]);
         }
         renderChart('diskio-chart', [
-          { values: diskReadHistory.map(v => v / 1024), color: '#4ade80', fillColor: '#4ade80' },
-          { values: diskWriteHistory.map(v => v / 1024), color: '#60a5fa', fillColor: '#60a5fa' },
+          { values: diskReadHistory.map(v => v / 1024), color: chartColor('green'), fillColor: chartColor('green') },
+          { values: diskWriteHistory.map(v => v / 1024), color: chartColor('blue'), fillColor: chartColor('blue') },
         ]);
         document.getElementById('diskio-rates').textContent =
           `R: ${formatBytes(data.disk_io.read_rate)}/s · W: ${formatBytes(data.disk_io.write_rate)}/s`;
@@ -1234,6 +1444,7 @@
         renderGpuProcesses(data.gpu_processes || []);
         checkAlerts(data);
         checkNotifications(data);
+        updateWebhookBadge(data.alerts_config);
       } catch (err) {
         console.error('Refresh error:', err);
         setConnectionState(false);
