@@ -46,10 +46,10 @@ To get full functionality (especially the GPU telemetry), your system should hav
 
 ### Method 1: Using the `.deb` Package (Recommended for Debian/Ubuntu)
 
-1. **[Download the latest `.deb` package](https://github.com/Abhishek-Durgude/Resource-Monitor/raw/main/resource-dashboard_1.1-4_all.deb)** from this repository.
+1. **[Download the latest `.deb` package](https://github.com/Abhishek-Durgude/Resource-Monitor/raw/main/resource-dashboard_1.1-5_all.deb)** from this repository.
 2. Install it using `apt` (this automatically handles required dependencies):
    ```bash
-   sudo apt install ./resource-dashboard_1.1-4_all.deb
+   sudo apt install ./resource-dashboard_1.1-5_all.deb
    ```
 3. You can now launch it from your application menu or terminal!
 
