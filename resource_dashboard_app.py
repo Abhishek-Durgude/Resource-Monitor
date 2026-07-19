@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AIIMS Resource Dashboard — Native Linux Desktop Application
+Resource Dashboard — Native Linux Desktop Application
 
 A standalone GTK3 + WebKit2 desktop application that provides real-time
 system resource monitoring. Wraps the resource_dashboard HTTP server in
@@ -231,7 +231,7 @@ class DashboardWindow(Gtk.Window):
     """Native GTK window hosting the resource dashboard via WebKit2."""
 
     def __init__(self, url: str, icon_path: str | None = None):
-        super().__init__(title="Resource Dashboard – AIIMS Rishikesh")
+        super().__init__(title="Resource Dashboard")
         self.url = url
         self._setup_window(icon_path)
         self._setup_header_bar()
@@ -266,7 +266,7 @@ class DashboardWindow(Gtk.Window):
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
         header.set_title("🖥️ Resource Dashboard")
-        header.set_subtitle("AIIMS Rishikesh · Live System Monitor")
+        header.set_subtitle("Live System Monitor · by Clixzsera Lab, Abhishek Durgude")
 
         # Reload button
         reload_btn = Gtk.Button()
@@ -559,7 +559,7 @@ SPLASH_HTML = """<!doctype html>
 # ─────────────────────────────────────────────────────────────────────────────
 def parse_app_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="AIIMS Resource Dashboard – Native Linux Desktop App",
+        description="Resource Dashboard – Native Linux Desktop App",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Keyboard Shortcuts:
