@@ -24,6 +24,8 @@ import sys
 import socket
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 # ── GTK / WebKit Imports ─────────────────────────────────────────────────────
@@ -125,25 +127,35 @@ class WindowStatePersistence:
     CONFIG_DIR = Path.home() / ".config" / "resource-dashboard"
     CONFIG_FILE = CONFIG_DIR / "window_state.json"
 
-    def __init__(self, window: Gtk.Window, debounce_ms: int = 500):
+    def __init__(
+        self,
+        window: Gtk.Window,
+        debounce_ms: int = 500,
+        config_file: Path | None = None,
+        default_size: tuple[int, int] = (1400, 900),
+    ):
         self._window = window
         self._debounce_ms = debounce_ms
         self._save_timer_id: int | None = None
+        self._config_file = config_file or self.CONFIG_FILE
+        self._default_size = default_size
+        self.last_state: dict = {}
         self._restore()
         window.connect("configure-event", self._on_configure)
 
     # ── Restore ───────────────────────────────────────────────────────────
     def _restore(self) -> None:
         """Load previously-saved geometry and apply it (with screen-bounds check)."""
-        if not self.CONFIG_FILE.is_file():
+        if not self._config_file.is_file():
             return
         try:
-            state = json.loads(self.CONFIG_FILE.read_text())
+            state = json.loads(self._config_file.read_text())
         except (json.JSONDecodeError, OSError):
             return
+        self.last_state = state
 
-        width = state.get("width", 1400)
-        height = state.get("height", 900)
+        width = state.get("width", self._default_size[0])
+        height = state.get("height", self._default_size[1])
         x = state.get("x")
         y = state.get("y")
 
@@ -178,21 +190,29 @@ class WindowStatePersistence:
             return False  # GLib.SOURCE_REMOVE
         size = self._window.get_size()
         pos = self._window.get_position()
-        state = {
+        state = dict(self.last_state)
+        state.update({
             "width": size.width,
             "height": size.height,
             "x": pos.root_x,
             "y": pos.root_y,
-        }
+        })
+        self.last_state = state
         try:
-            self.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            self.CONFIG_FILE.write_text(json.dumps(state, indent=2))
+            self._config_file.parent.mkdir(parents=True, exist_ok=True)
+            self._config_file.write_text(json.dumps(state, indent=2))
         except OSError as exc:
             print(f"Warning: could not save window state: {exc}", file=sys.stderr)
         return False  # GLib.SOURCE_REMOVE
 
-    def save_now(self) -> None:
-        """Immediately persist the current window geometry (call before hide/quit)."""
+    def save_now(self, extra: dict | None = None) -> None:
+        """Immediately persist the current window geometry (call before hide/quit).
+
+        *extra* lets callers stash additional fields (e.g. visibility) in the
+        same state file without a separate config file.
+        """
+        if extra:
+            self.last_state.update(extra)
         if self._save_timer_id is not None:
             GLib.source_remove(self._save_timer_id)
             self._save_timer_id = None
@@ -312,6 +332,13 @@ class DashboardWindow(Gtk.Window):
         fs_btn.connect("clicked", self._on_fullscreen)
         header.pack_end(fs_btn)
 
+        # Mini widget toggle (small always-on-top HUD; visible while minimized)
+        mini_btn = Gtk.ToggleButton(label="▢")
+        mini_btn.set_tooltip_text("Mini Widget — stays visible when minimized (Ctrl+M)")
+        self._mini_toggle_handler_id = mini_btn.connect("toggled", self._on_mini_toggled)
+        self._mini_btn = mini_btn
+        header.pack_end(mini_btn)
+
         self.set_titlebar(header)
 
     def _setup_webview(self) -> None:
@@ -388,6 +415,13 @@ class DashboardWindow(Gtk.Window):
             0,
             lambda *_: self._on_zoom_reset(None),
         )
+        # Ctrl+M: Toggle mini widget
+        accel_group.connect(
+            Gdk.keyval_from_name("m"),
+            Gdk.ModifierType.CONTROL_MASK,
+            0,
+            lambda *_: self._mini_btn.set_active(not self._mini_btn.get_active()),
+        )
         # F11: Fullscreen
         self.connect("key-press-event", self._on_key_press)
 
@@ -418,6 +452,30 @@ class DashboardWindow(Gtk.Window):
 
     def _on_pin_toggled(self, btn) -> None:
         self.set_keep_above(btn.get_active())
+
+    # ── Mini widget ──────────────────────────────────────────────────────
+    _mini_widget = None
+
+    def set_mini_widget(self, widget: "MiniWidgetWindow") -> None:
+        """Attach the mini-widget instance and keep the header toggle in sync
+        with it in both directions (button click, or the widget's own ✕)."""
+        self._mini_widget = widget
+        widget.set_visibility_callback(self._sync_mini_button)
+        self._sync_mini_button()
+
+    def _sync_mini_button(self) -> None:
+        active = bool(self._mini_widget and self._mini_widget.get_visible())
+        self._mini_btn.handler_block(self._mini_toggle_handler_id)
+        self._mini_btn.set_active(active)
+        self._mini_btn.handler_unblock(self._mini_toggle_handler_id)
+
+    def _on_mini_toggled(self, btn) -> None:
+        if not self._mini_widget:
+            return
+        if btn.get_active():
+            self._mini_widget.show_widget()
+        else:
+            self._mini_widget.hide_widget()
 
     def _on_fullscreen(self, _widget) -> None:
         if self._is_fullscreen:
@@ -451,6 +509,8 @@ class DashboardWindow(Gtk.Window):
         # Save window geometry one last time
         if hasattr(self, '_state_persistence') and self._state_persistence:
             self._state_persistence.save_now()
+        if self._mini_widget:
+            self._mini_widget.shutdown()
         Gtk.main_quit()
 
     def _check_server_and_load(self) -> bool:
@@ -485,6 +545,242 @@ class DashboardWindow(Gtk.Window):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Mini Widget: a small always-on-top HUD card for glancing at usage while
+# working in another application (e.g. VS Code), without switching windows.
+# ─────────────────────────────────────────────────────────────────────────────
+MINI_WIDGET_CSS = b"""
+window.mini-widget {
+  background-color: rgba(11, 16, 32, 0.94);
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+.mini-title {
+  color: #e5eefc; font-weight: 700; font-size: 11px; letter-spacing: 0.02em;
+}
+.mini-updated {
+  color: #64748b; font-size: 9px;
+}
+.mini-label {
+  color: #92a2bf; font-size: 10px; font-weight: 600; min-width: 44px;
+}
+.mini-value {
+  color: #e5eefc; font-weight: 700; font-size: 10px; min-width: 40px;
+}
+button.mini-btn {
+  background: transparent; border: none; color: #92a2bf; padding: 1px 3px;
+  min-width: 0; min-height: 0;
+}
+button.mini-btn:hover { color: #e5eefc; background: rgba(148, 163, 184, 0.12); border-radius: 6px; }
+progressbar.mini-bar trough {
+  background-color: rgba(148, 163, 184, 0.16); border-radius: 999px; min-height: 6px; border: none;
+}
+progressbar.mini-bar progress {
+  background-color: #5eead4; background-image: none; border-radius: 999px; min-height: 6px;
+}
+progressbar.mini-bar.warn progress { background-color: #fbbf24; }
+progressbar.mini-bar.danger progress { background-color: #fb7185; }
+"""
+
+
+class MiniWidgetWindow(Gtk.Window):
+    """A small, undecorated, always-on-top card showing live CPU/Mem/GPU/Disk.
+
+    Polls the same local dashboard HTTP server the main window uses, over a
+    plain socket request (no WebKit), so it stays cheap enough to leave open
+    all the time. It is a separate top-level window, so minimizing the main
+    DashboardWindow does not affect it.
+    """
+
+    CONFIG_FILE = Path.home() / ".config" / "resource-dashboard" / "mini_widget_state.json"
+    POLL_SECONDS = 2.0
+
+    def __init__(self, metrics_url: str, on_restore_main):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self._metrics_url = metrics_url
+        self._on_restore_main = on_restore_main
+        self._on_visibility_change = None
+        self._poll_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+
+        self.set_title("Resource Mini")
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_default_size(210, 190)
+        self.set_keep_above(True)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_type_hint(Gdk.WindowTypeHint.UTILITY)
+        self.get_style_context().add_class("mini-widget")
+
+        screen = self.get_screen()
+        visual = screen.get_rgba_visual() if screen else None
+        if visual:
+            self.set_visual(visual)
+        self.set_app_paintable(True)
+
+        self.connect("delete-event", self._on_delete)
+        self.connect("button-press-event", self._on_drag)
+
+        self._build_ui()
+        self._state = WindowStatePersistence(
+            self, config_file=self.CONFIG_FILE, default_size=(210, 190)
+        )
+        if "x" not in self._state.last_state:
+            self._default_position()
+
+    # ── UI construction ─────────────────────────────────────────────────
+    def _build_ui(self) -> None:
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        outer.set_margin_top(10)
+        outer.set_margin_bottom(10)
+        outer.set_margin_start(12)
+        outer.set_margin_end(12)
+        self.add(outer)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        title = Gtk.Label(label="🖥️ Resource Mini")
+        title.get_style_context().add_class("mini-title")
+        title.set_halign(Gtk.Align.START)
+        header.pack_start(title, True, True, 0)
+
+        restore_btn = Gtk.Button(label="⤢")
+        restore_btn.get_style_context().add_class("mini-btn")
+        restore_btn.set_tooltip_text("Show main window")
+        restore_btn.connect("clicked", lambda _b: self._on_restore_main())
+        header.pack_end(restore_btn, False, False, 0)
+
+        close_btn = Gtk.Button(label="✕")
+        close_btn.get_style_context().add_class("mini-btn")
+        close_btn.set_tooltip_text("Hide mini widget")
+        close_btn.connect("clicked", lambda _b: self.hide_widget())
+        header.pack_end(close_btn, False, False, 0)
+
+        outer.pack_start(header, False, False, 0)
+
+        self._rows = {}
+        for key, label in (("cpu", "CPU"), ("mem", "MEM"), ("gpu", "GPU"), ("disk", "DISK")):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            name_lbl = Gtk.Label(label=label)
+            name_lbl.get_style_context().add_class("mini-label")
+            name_lbl.set_halign(Gtk.Align.START)
+            row.pack_start(name_lbl, False, False, 0)
+
+            bar = Gtk.ProgressBar()
+            bar.get_style_context().add_class("mini-bar")
+            bar.set_valign(Gtk.Align.CENTER)
+            row.pack_start(bar, True, True, 0)
+
+            value_lbl = Gtk.Label(label="—")
+            value_lbl.get_style_context().add_class("mini-value")
+            value_lbl.set_halign(Gtk.Align.END)
+            row.pack_start(value_lbl, False, False, 0)
+
+            outer.pack_start(row, False, False, 0)
+            self._rows[key] = (row, bar, value_lbl)
+
+        self._updated_lbl = Gtk.Label(label="Waiting for data…")
+        self._updated_lbl.get_style_context().add_class("mini-updated")
+        self._updated_lbl.set_halign(Gtk.Align.START)
+        outer.pack_start(self._updated_lbl, False, False, 0)
+
+    def _default_position(self) -> None:
+        screen = self.get_screen()
+        if not screen:
+            return
+        monitor = screen.get_display().get_monitor(0)
+        geo = monitor.get_workarea() if monitor else None
+        if geo:
+            self.move(geo.x + geo.width - 230, geo.y + geo.height - 210)
+
+    def _on_drag(self, widget, event) -> bool:
+        if event.button == 1:
+            self.begin_move_drag(event.button, int(event.x_root), int(event.y_root), event.time)
+        return False
+
+    def _on_delete(self, *_args) -> bool:
+        self.hide_widget()
+        return True  # prevent destruction; this window is reused for the app's lifetime
+
+    # ── Visibility / polling lifecycle ──────────────────────────────────
+    def set_visibility_callback(self, callback) -> None:
+        """Callback invoked (no args) whenever show_widget()/hide_widget() runs,
+        so the main window's toggle button can stay in sync when the mini
+        widget is closed via its own ✕ button."""
+        self._on_visibility_change = callback
+
+    def show_widget(self) -> None:
+        self.show_all()
+        self.present()
+        if self._poll_thread is None or not self._poll_thread.is_alive():
+            self._stop_event.clear()
+            self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
+            self._poll_thread.start()
+        self._state.save_now(extra={"visible": True})
+        if self._on_visibility_change:
+            self._on_visibility_change()
+
+    def hide_widget(self) -> None:
+        self._stop_event.set()
+        self.hide()
+        self._state.save_now(extra={"visible": False})
+        if self._on_visibility_change:
+            self._on_visibility_change()
+
+    def shutdown(self) -> None:
+        self._stop_event.set()
+
+    # ── Data polling (background thread) ────────────────────────────────
+    def _poll_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                with urllib.request.urlopen(self._metrics_url, timeout=3) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                GLib.idle_add(self._apply_metrics, data)
+            except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
+                GLib.idle_add(self._apply_connection_error)
+            self._stop_event.wait(self.POLL_SECONDS)
+
+    def _set_row(self, key: str, percent: float | None, extra_text: str = "") -> None:
+        row, bar, value_lbl = self._rows[key]
+        if percent is None:
+            row.set_visible(False)
+            return
+        row.set_visible(True)
+        fraction = max(0.0, min(1.0, percent / 100.0))
+        bar.set_fraction(fraction)
+        ctx = bar.get_style_context()
+        ctx.remove_class("warn")
+        ctx.remove_class("danger")
+        if percent >= 90:
+            ctx.add_class("danger")
+        elif percent >= 75:
+            ctx.add_class("warn")
+        value_lbl.set_label(f"{percent:.0f}%{extra_text}")
+
+    def _apply_metrics(self, data: dict) -> bool:
+        self._set_row("cpu", float(data.get("cpu_percent", 0) or 0))
+        mem = data.get("memory") or {}
+        self._set_row("mem", float(mem.get("percent", 0) or 0))
+        disk = data.get("disk") or {}
+        self._set_row("disk", float(disk.get("percent", 0) or 0))
+
+        gpus = data.get("gpu") or []
+        if gpus:
+            utils = [float(g["utilization"]) for g in gpus if str(g.get("utilization")) not in ("N/A", "[N/A]", "")]
+            avg_util = sum(utils) / len(utils) if utils else 0.0
+            self._set_row("gpu", avg_util)
+        else:
+            self._set_row("gpu", None)
+
+        self._updated_lbl.set_label(f"Updated {time.strftime('%H:%M:%S')}")
+        return False  # GLib.SOURCE_REMOVE
+
+    def _apply_connection_error(self) -> bool:
+        self._updated_lbl.set_label("Connection lost — retrying…")
+        return False  # GLib.SOURCE_REMOVE
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # System Tray (optional, requires AppIndicator3)
 # ─────────────────────────────────────────────────────────────────────────────
 def setup_tray_indicator(window: DashboardWindow, icon_path: str | None) -> None:
@@ -511,6 +807,10 @@ def setup_tray_indicator(window: DashboardWindow, icon_path: str | None) -> None
     hide_item = Gtk.MenuItem(label="Minimize to Tray")
     hide_item.connect("activate", lambda _: window.iconify())
     menu.append(hide_item)
+
+    mini_item = Gtk.MenuItem(label="Toggle Mini Widget")
+    mini_item.connect("activate", lambda _: window._mini_btn.set_active(not window._mini_btn.get_active()))
+    menu.append(mini_item)
 
     menu.append(Gtk.SeparatorMenuItem())
 
@@ -567,6 +867,7 @@ Keyboard Shortcuts:
   Ctrl+=    Zoom in
   Ctrl+-    Zoom out
   Ctrl+0    Reset zoom
+  Ctrl+M    Toggle mini widget (small always-on-top HUD)
   Ctrl+Q    Quit
   F11       Toggle fullscreen
 """,
@@ -633,6 +934,13 @@ def main() -> None:
             icon_path = str(candidate)
             break
 
+    # ── Shared CSS (used by the mini widget) ──
+    css_provider = Gtk.CssProvider()
+    css_provider.load_from_data(MINI_WIDGET_CSS)
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+
     # ── Create the GTK window ──
     window = DashboardWindow(url, icon_path)
     if args.zoom != 1.0:
@@ -642,6 +950,16 @@ def main() -> None:
     # ── Window state persistence ──
     window._state_persistence = WindowStatePersistence(window)
 
+    # ── Mini widget: small always-on-top HUD, independent of the main window's
+    #    minimize state, so usage stays visible while working in another app ──
+    metrics_url = f"http://127.0.0.1:{port}/api/metrics"
+    mini_widget = MiniWidgetWindow(
+        metrics_url, on_restore_main=lambda: (window.present(), window.deiconify())
+    )
+    if mini_widget._state.last_state.get("visible"):
+        mini_widget.show_widget()
+    window.set_mini_widget(mini_widget)
+
     # ── System tray (if available) ──
     setup_tray_indicator(window, icon_path)
 
@@ -649,11 +967,12 @@ def main() -> None:
 
     print(f"Dashboard server running at {url}")
     print(f"Monitoring: {sample_root}")
-    print("Press Ctrl+Q to quit.")
+    print("Press Ctrl+Q to quit. Ctrl+M toggles the mini widget.")
 
     Gtk.main()
 
     # Cleanup
+    mini_widget.shutdown()
     server_thread.stop()
     print("\nDashboard closed.")
 

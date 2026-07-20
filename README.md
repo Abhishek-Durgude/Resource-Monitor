@@ -40,6 +40,7 @@ A native Linux desktop application and standalone HTTP server for live system re
 - **UI Polish:** Theme-aware chart colors (separate palettes tuned for dark/light contrast), a compact-density toggle for fitting more on screen, an expand toggle to widen the Top Processes table to full width, GPU-active rows highlighted in the process table, in-app toast notifications instead of browser alert popups, and "⤢" expand icons on every trend chart that jump straight into the History modal for that metric.
 - **Headless / Server Mode:** Runs with zero GUI dependencies; ships a systemd service template for running as a background service that survives logout/reboot.
 - **Native Desktop App:** GTK3 + WebKit2 wrapper offering window state persistence, minimize-to-tray, system tray icon, keyboard shortcuts, always-on-top pinning, and fullscreen mode.
+- **Mini Widget:** A small, undecorated, always-on-top card (`Ctrl+M`, or the ▢ header button) showing live CPU/Memory/GPU/Disk while the main window is minimized — glance at usage without switching away from VS Code or whatever you're working in. It's a separate window that polls the local server directly (no WebKit), draggable, and remembers whether it was open and where you left it across restarts.
 
 ## 🛠 Prerequisites
 
@@ -50,10 +51,10 @@ To get full functionality (especially the GPU telemetry), your system should hav
 
 ### Method 1: Using the `.deb` Package (Recommended for Debian/Ubuntu)
 
-1. **[Download the latest `.deb` package](https://github.com/Abhishek-Durgude/Resource-Monitor/raw/main/resource-dashboard_1.3-1_all.deb)** from this repository.
+1. **[Download the latest `.deb` package](https://github.com/Abhishek-Durgude/Resource-Monitor/raw/main/resource-dashboard_1.3-2_all.deb)** from this repository.
 2. Install it using `apt` (this automatically handles required dependencies):
    ```bash
-   sudo apt install ./resource-dashboard_1.3-1_all.deb
+   sudo apt install ./resource-dashboard_1.3-2_all.deb
    ```
 3. You can now launch it from your application menu or terminal!
 
@@ -92,6 +93,7 @@ When the dashboard is open, you can use these shortcuts:
 - `Ctrl + =`: Zoom In
 - `Ctrl + -`: Zoom Out
 - `Ctrl + 0`: Reset Zoom
+- `Ctrl + M`: Toggle the Mini Widget (small always-on-top HUD, visible even when minimized)
 - `F11`: Toggle Fullscreen
 - `Ctrl + Q`: Quit Application
 
